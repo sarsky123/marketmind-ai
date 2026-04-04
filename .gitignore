@@ -1,0 +1,17 @@
+**/.DS_Store
+.env
+backend/.env
+frontend/node_modules
+backend/.venv
+node_modules
+dist
+build
+.vscode
+__pycache__
+.pytest_cache
+.mypy_cache
+.ruff_cache
+
+# Local-only structural reference clones (not part of the repo)
+reference/
+
