@@ -5,6 +5,7 @@ from alembic import context
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlmodel import SQLModel
 
+import models  # noqa: F401 — register SQLModel table metadata
 
 config = context.config
 
