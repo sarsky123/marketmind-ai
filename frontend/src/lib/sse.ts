@@ -1,7 +1,10 @@
+import type { Citation } from "./types";
+
 export type StatusPayload = { message: string; tool: string };
 export type DonePayload = {
   stop_reason: string;
   usage?: { total_tokens?: number };
+  citations?: Citation[];
 };
 export type ErrorPayload = { message: string; code: number };
 
@@ -25,8 +28,23 @@ function normalizeStatus(value: unknown): StatusPayload | null {
 }
 
 function isDonePayload(value: unknown): value is DonePayload {
-  if (!isRecord(value)) return false;
-  return typeof value.stop_reason === "string";
+  if (!isRecord(value) || typeof value.stop_reason !== "string") {
+    return false;
+  }
+  const citations = value.citations;
+  if (citations === undefined) {
+    return true;
+  }
+  if (!Array.isArray(citations)) {
+    return false;
+  }
+  return citations.every(
+    (citation) =>
+      isRecord(citation) &&
+      typeof citation.index === "number" &&
+      typeof citation.title === "string" &&
+      typeof citation.url === "string",
+  );
 }
 
 function isErrorPayload(value: unknown): value is ErrorPayload {

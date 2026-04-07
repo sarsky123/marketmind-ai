@@ -9,36 +9,6 @@ interface Props {
   message: ChatMessage;
 }
 
-function withClickableCitationLinks(markdown: string): string {
-  const citationUrlByIndex = new Map<string, string>();
-  const lines = markdown.split("\n");
-
-  for (const line of lines) {
-    const bracketMatch = line.match(/^\s*\[(\d+)\]\s*[:\-]\s*(https?:\/\/\S+)/i);
-    if (bracketMatch) {
-      citationUrlByIndex.set(bracketMatch[1], bracketMatch[2]);
-      continue;
-    }
-
-    const numberedMatch = line.match(/^\s*(\d+)\.\s*(https?:\/\/\S+)/i);
-    if (numberedMatch) {
-      citationUrlByIndex.set(numberedMatch[1], numberedMatch[2]);
-    }
-  }
-
-  if (citationUrlByIndex.size === 0) {
-    return markdown;
-  }
-
-  return markdown.replace(/\[(\d+)\](?!\()/g, (fullMatch, idx: string) => {
-    const url = citationUrlByIndex.get(idx);
-    if (!url) {
-      return fullMatch;
-    }
-    return `[${idx}](${url})`;
-  });
-}
-
 function sanitizeLinkHref(href?: string): string | undefined {
   if (!href) {
     return undefined;
@@ -92,7 +62,6 @@ const markdownComponents: Components = {
 export function MessageBubble({ message }: Props) {
   const isUser = message.role === "user";
   const content = message.content ?? "";
-  const markdownContent = withClickableCitationLinks(content);
 
   return (
     <div className={`bubble-row ${isUser ? "bubble-row--user" : "bubble-row--assistant"}`}>
@@ -102,8 +71,30 @@ export function MessageBubble({ message }: Props) {
         ) : (
           <div className="bubble__text bubble__text--markdown">
             <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-              {markdownContent}
+              {content}
             </ReactMarkdown>
+            {!!message.citations?.length && (
+              <div className="bubble__citations" aria-label="Citations">
+                {message.citations.map((citation) => {
+                  const safeHref = sanitizeLinkHref(citation.url);
+                  if (!safeHref) {
+                    return null;
+                  }
+                  return (
+                    <a
+                      key={`${citation.index}-${citation.url}`}
+                      className="bubble__citation-chip"
+                      href={safeHref}
+                      target="_blank"
+                      rel="noreferrer noopener"
+                      title={citation.title}
+                    >
+                      [{citation.index}] {citation.title}
+                    </a>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
       </div>

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Any, Literal, TypedDict
 
 
 class ToolName(StrEnum):
@@ -24,6 +24,12 @@ def parse_tool_name(name: str) -> ToolName | None:
 AgentRole = Literal["orchestrator", "finance_expert"]
 
 StopReason = Literal["completed", "tool_calls", "error", "max_iterations"]
+
+
+class Citation(TypedDict):
+    index: int
+    title: str
+    url: str
 
 
 @dataclass

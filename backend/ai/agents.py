@@ -19,6 +19,7 @@ from ai.registry import (
 from ai.repository import ChatRepository
 from ai.trace import EngineTrace
 from ai.types import (
+    Citation,
     EngineConfig,
     ToolName,
     ToolRunResult,
@@ -50,6 +51,25 @@ def _tool_calls_to_stored(message: Any) -> list[dict[str, Any]]:
             }
         )
     return out
+
+
+def _merge_citation_refs(citations: list[Citation], refs_value: object) -> None:
+    if not isinstance(refs_value, list):
+        return
+    existing_urls = {c["url"] for c in citations}
+    for raw_ref in refs_value:
+        if not isinstance(raw_ref, dict):
+            continue
+        title = raw_ref.get("title")
+        url = raw_ref.get("url")
+        if not isinstance(title, str) or not isinstance(url, str):
+            continue
+        title = title.strip()
+        url = url.strip()
+        if not title or not url or url in existing_urls:
+            continue
+        citations.append({"index": len(citations) + 1, "title": title, "url": url})
+        existing_urls.add(url)
 
 
 def format_history_for_openai(
@@ -91,7 +111,7 @@ async def run_finance_expert(
     specific_task: str,
     config: EngineConfig,
     trace: EngineTrace,
-) -> tuple[str, UsageTotals]:
+) -> tuple[str, UsageTotals, list[Citation]]:
     """Tight isolation: [system, user task] only; inner tool loop; no DB history."""
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": get_finance_expert_system_prompt()},
@@ -99,6 +119,7 @@ async def run_finance_expert(
     ]
     tools = get_openai_tools_for_finance_expert(perm)
     usage = UsageTotals()
+    citations: list[Citation] = []
     rounds = 0
     while rounds < config.max_finance_rounds:
         rounds += 1
@@ -125,6 +146,7 @@ async def run_finance_expert(
                 args = tc.function.arguments or "{}"
                 trace.add("finance_tool", name)
                 tr = await dispatch_registry_tool(name, args, ctx)
+                _merge_citation_refs(citations, tr.meta.get("refs"))
                 content = tr.message if tr.ok else f"Tool error: {tr.message}"
                 messages.append(
                     {
@@ -134,10 +156,11 @@ async def run_finance_expert(
                     }
                 )
             continue
-        return choice.content or "", usage
+        return choice.content or "", usage, citations
     return (
         "Finance expert stopped after maximum iterations without a final answer.",
         usage,
+        citations,
     )
 
 
@@ -154,6 +177,7 @@ async def run_orchestrator(
     perm = perm or ToolPermissionContext()
     trace = EngineTrace()
     usage_total = UsageTotals()
+    citations: list[Citation] = []
 
     if not ctx.openai_api_key:
         yield {
@@ -227,7 +251,7 @@ async def run_orchestrator(
                         task = str(parsed.get("specific_task", ""))
                         trace.add(str(ToolName.CONSULT_FINANCE_AGENT), task[:200])
                         try:
-                            summary, u_fin = await run_finance_expert(
+                            summary, u_fin, fin_citations = await run_finance_expert(
                                 ctx=ctx,
                                 perm=perm,
                                 client=client,
@@ -243,7 +267,16 @@ async def run_orchestrator(
                             )
                         else:
                             usage_total.total_tokens += u_fin.total_tokens
-                            tr = ToolRunResult(ok=True, message=summary, meta={})
+                            tr = ToolRunResult(
+                                ok=True,
+                                message=summary,
+                                meta={
+                                    "refs": [
+                                        {"title": c["title"], "url": c["url"]}
+                                        for c in fin_citations
+                                    ]
+                                },
+                            )
                 elif tool_enum is None:
                     tr = ToolRunResult(
                         ok=False,
@@ -253,6 +286,7 @@ async def run_orchestrator(
                 else:
                     tr = await dispatch_registry_tool(name_str, args, ctx)
 
+                _merge_citation_refs(citations, tr.meta.get("refs"))
                 tool_content = tr.message if tr.ok else f"Error: {tr.message}"
                 await repo.add_message(
                     session_id,
@@ -289,6 +323,7 @@ async def run_orchestrator(
         "kind": "done",
         "stop_reason": "completed",
         "usage": {"total_tokens": usage_total.total_tokens},
+        "citations": citations,
     }
 
 
@@ -305,6 +340,7 @@ def map_engine_event_to_sse(event: dict[str, Any]) -> tuple[str, object]:
         return "done", {
             "stop_reason": event.get("stop_reason", "completed"),
             "usage": event.get("usage", {}),
+            "citations": event.get("citations", []),
         }
     if kind == "error":
         return "error", {

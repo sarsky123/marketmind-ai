@@ -114,7 +114,12 @@ export function useChat(): UseChatReturn {
               const finalContent = accumulated;
               setMessages((prev) => [
                 ...prev,
-                { id: nextId(), role: "assistant", content: finalContent },
+                {
+                  id: nextId(),
+                  role: "assistant",
+                  content: finalContent,
+                  citations: ev.data.citations,
+                },
               ]);
               setStreamingContent("");
               setUsage(ev.data.usage ?? null);

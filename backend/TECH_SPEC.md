@@ -132,11 +132,15 @@ data: "..."
 **`event: done`**
 
 ```text
-data: {"stop_reason": "completed", "usage": {"total_tokens": 123}}
+data: {"stop_reason": "completed", "usage": {"total_tokens": 123}, "citations": [{"index": 1, "title": "Example source", "url": "https://example.com"}]}
 ```
 
 - `stop_reason` — short machine-readable reason (e.g. `completed`, `cancelled` if you distinguish client abort without `error`).
 - `usage` — optional aggregate token accounting for the request; shape may grow but **must** stay JSON-serializable.
+- `citations` — optional structured citation metadata for the final assistant response. Each citation object contains:
+  - `index: number`
+  - `title: string`
+  - `url: string`
 
 **`event: error`**
 
