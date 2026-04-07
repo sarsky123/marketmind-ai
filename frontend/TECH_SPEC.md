@@ -6,27 +6,22 @@ Normative detail for React/Vite client behavior, streaming, and abort handling. 
 
 ## Component tree (target)
 
-Current scaffold is a single `App` page; evolve toward:
-
 ```text
 App
-├── Layout / Shell
-├── HealthPanel (optional dev)
-└── ChatWorkspace
-    ├── SessionSidebar (future: multi-session)
-    ├── ChatWindow
-    │   ├── MessageList
-    │   │   └── MessageBubble (user | assistant | system)
-    │   ├── ThoughtProcess / ToolStatusIndicator (from `status` events)
-    │   └── StreamingIndicator (active when SSE open)
-    └── ChatComposer
-        ├── Text input
-        ├── Send button
-        └── StopGenerating (wired to AbortController)
+└── ChatLayout
+    ├── header (title + "New chat" button)
+    ├── ConnectionBanner (error alert, dismissible)
+    ├── MessageList
+    │   ├── MessageBubble (user | assistant)
+    │   ├── ThoughtPanel (collapsible, from `status` events)
+    │   └── StreamingBubble (in-progress assistant with cursor)
+    ├── usage-bar (token count after done)
+    └── Composer (auto-grow textarea + Send/Stop)
 ```
 
-- **MessageBubble:** Renders markdown or plain text for assistant; shows citations per product rules.
-- **ToolStatusIndicator:** Shows latest `status.message` and optional `status.tool` badge (or short list of recent steps).
+- **MessageBubble:** Renders pre-wrap plain text; user right-aligned, assistant left-aligned. Future: markdown + citations.
+- **ThoughtPanel:** Collapsible strip showing latest `status.message` + `tool` badge. Expands to numbered step list.
+- **StreamingBubble:** Shows accumulated `token` content with a blinking cursor. Merges into a final MessageBubble on `done`.
 
 ---
 
@@ -119,3 +114,36 @@ type ChatStreamEvent =
 - Use relative URL `/api/chat/stream` behind Vite proxy in dev (`vite.config` → backend).
 - **CORS:** production must allow frontend origin; local dev already whitelisted in FastAPI.
 - Prefer **`fetch` + stream reader** or `EventSource` only if the API is adapted to pure GET (this API is **POST** with body — use `fetch`).
+
+### Proxy target configuration
+
+The Vite dev-server proxy target is driven by the `VITE_PROXY_TARGET` env var in `vite.config.ts`:
+
+| Environment | Value | How it's set |
+| --- | --- | --- |
+| **Host dev** (Vite on bare metal) | `http://127.0.0.1:8000` (default) | No config needed; just run backend on port 8000 |
+| **Docker Compose** | `http://backend:8000` | Set via `environment:` in `docker-compose.yml` frontend service |
+
+This avoids the DNS failure that occurs when Vite running on the host tries to resolve the `backend` Docker hostname.
+
+### File structure
+
+```text
+src/
+├── App.tsx               — Shell: renders ChatLayout + imports global CSS
+├── index.css             — Global CSS with design tokens
+├── main.tsx              — React root mount
+├── components/
+│   ├── ChatLayout.tsx    — Full-viewport chat shell (header, messages, composer)
+│   ├── Composer.tsx      — Auto-growing textarea + Send/Stop buttons
+│   ├── ConnectionBanner.tsx — Non-blocking error banner
+│   ├── MessageBubble.tsx — Single user or assistant bubble
+│   ├── MessageList.tsx   — Scrollable list with auto-scroll
+│   ├── StreamingBubble.tsx — In-progress assistant bubble with cursor blink
+│   └── ThoughtPanel.tsx  — Collapsible thought-process steps from status events
+├── hooks/
+│   └── useChat.ts        — All session + SSE + message state (see useChat hook section above)
+└── lib/
+    ├── sse.ts            — SSE frame parser (shared types + parseSSEFrame)
+    └── types.ts          — ChatMessage, ChatPhase, StatusStep types
+```

@@ -13,6 +13,7 @@
     "react-dom": "*"
   },
   "devDependencies": {
+    "@types/node": "^25.5.2",
     "@types/react": "*",
     "@types/react-dom": "*",
     "@vitejs/plugin-react": "*",
@@ -20,4 +21,3 @@
     "vite": "*"
   }
 }
-
