@@ -1,16 +1,30 @@
+from __future__ import annotations
+
 import asyncio
 import json
+import logging
 import os
-from typing import AsyncIterator, Literal
+import uuid
+
+logger = logging.getLogger(__name__)
+from typing import AsyncIterator
 
 import asyncpg
 import redis.asyncio as redis
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
-app = FastAPI()
+from ai.agents import map_engine_event_to_sse, run_orchestrator
+from ai.context import build_runtime_context
+from ai.permissions import ToolPermissionContext
+from ai.repository import ChatRepository
+from ai.types import EngineConfig
+from db import get_db_session, get_engine, get_redis_client
+
+app = FastAPI(title="AI Financial Assistant API")
 
 app.add_middleware(
     CORSMiddleware,
@@ -21,26 +35,39 @@ app.add_middleware(
 )
 
 
-class ChatMessage(BaseModel):
-    role: Literal["user", "assistant", "system"]
-    content: str
+class CreateSessionRequest(BaseModel):
+    title: str | None = None
+    user_id: uuid.UUID | None = None
 
 
-class ChatRequest(BaseModel):
-    messages: list[ChatMessage]
+class CreateSessionResponse(BaseModel):
+    session_id: uuid.UUID
+    user_id: uuid.UUID
 
 
-def _sse_event(event: str, data: object) -> str:
+class ChatStreamRequest(BaseModel):
+    session_id: uuid.UUID
+    message: str = Field(..., min_length=1)
+
+
+def _sse_line(event: str, data: object) -> str:
+    """Emit one SSE frame; token data must be a JSON string (quoted)."""
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+def _database_url_for_asyncpg(url: str) -> str:
+    if "+asyncpg" in url:
+        return url.replace("postgresql+asyncpg://", "postgresql://", 1)
+    return url
 
 
 async def _ping_postgres() -> bool:
     database_url = os.environ.get("DATABASE_URL")
     if not database_url:
         return False
-
+    url = _database_url_for_asyncpg(database_url)
     try:
-        conn = await asyncpg.connect(database_url)
+        conn = await asyncpg.connect(url)
         try:
             result = await asyncio.wait_for(conn.fetchval("SELECT 1"), timeout=3.0)
             return result == 1
@@ -54,7 +81,6 @@ async def _ping_redis() -> bool:
     redis_url = os.environ.get("REDIS_URL")
     if not redis_url:
         return False
-
     client = redis.from_url(redis_url)
     try:
         result = await asyncio.wait_for(client.ping(), timeout=3.0)
@@ -72,23 +98,64 @@ async def root() -> dict[str, str]:
 
 @app.get("/health")
 async def health() -> dict[str, bool]:
-    postgres_ok = await _ping_postgres()
-    redis_ok = await _ping_redis()
+    postgres_ok_source = bool(os.environ.get("DATABASE_URL"))
+    redis_ok_source = bool(os.environ.get("REDIS_URL"))
+    postgres_ok = postgres_ok_source and await _ping_postgres()
+    redis_ok = redis_ok_source and await _ping_redis()
     return {"postgres": postgres_ok, "redis": redis_ok}
 
 
+@app.post("/api/sessions", response_model=CreateSessionResponse)
+async def create_session(
+    body: CreateSessionRequest,
+    db_session: AsyncSession = Depends(get_db_session),
+) -> CreateSessionResponse:
+    repo = ChatRepository(db_session)
+    uid = await repo.ensure_user(body.user_id)
+    sess = await repo.create_session(uid, body.title)
+    await db_session.commit()
+    return CreateSessionResponse(session_id=sess.id, user_id=uid)
+
+
 @app.post("/api/chat/stream")
-async def chat_stream(_: ChatRequest) -> StreamingResponse:
-    async def _stream() -> AsyncIterator[str]:
+async def chat_stream(body: ChatStreamRequest) -> StreamingResponse:
+    redis_client = get_redis_client()
+    engine = get_engine()
+    config = EngineConfig()
+    perm = ToolPermissionContext()
+
+    async def _gen() -> AsyncIterator[str]:
         try:
-            yield _sse_event("status", {"message": "Dummy agent thinking..."})
+            async with AsyncSession(engine, expire_on_commit=False) as db_session:
+                repo = ChatRepository(db_session)
+                sess = await repo.get_session(body.session_id)
+                if sess is None:
+                    yield _sse_line(
+                        "error",
+                        {"message": "Session not found.", "code": 404},
+                    )
+                    return
 
-            for token in ["Hello ", "from ", "SSE!"]:
-                await asyncio.sleep(0.5)
-                yield _sse_event("token", {"text": token})
+                ctx = build_runtime_context(redis_client)
+                async for ev in run_orchestrator(
+                    db_session=db_session,
+                    repo=repo,
+                    ctx=ctx,
+                    session_id=body.session_id,
+                    user_message=body.message,
+                    config=config,
+                    perm=perm,
+                ):
+                    event_name, payload = map_engine_event_to_sse(ev)
+                    yield _sse_line(event_name, payload)
         except asyncio.CancelledError:
-            # Client disconnected or aborted generation.
             return
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("chat stream failed")
+            yield _sse_line(
+                "error",
+                {"message": "An unexpected error occurred.", "code": 500},
+            )
+            _ = exc
 
-    return StreamingResponse(_stream(), media_type="text/event-stream")
-
+    return StreamingResponse(_gen(), media_type="text/event-stream")

@@ -26,11 +26,8 @@ def get_engine() -> AsyncEngine:
 
 
 async def get_db_session() -> AsyncIterator[AsyncSession]:
-    async_session = AsyncSession(get_engine())
-    try:
+    async with AsyncSession(get_engine(), expire_on_commit=False) as async_session:
         yield async_session
-    finally:
-        await async_session.close()
 
 
 @lru_cache
