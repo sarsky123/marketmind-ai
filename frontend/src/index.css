@@ -238,6 +238,9 @@ html, body, #root {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+.bubble__citations-wrap {
   margin-top: 10px;
 }
 
@@ -261,6 +264,22 @@ html, body, #root {
 .bubble__citation-chip:hover {
   border-color: var(--color-primary);
   color: var(--color-primary);
+}
+
+.bubble__citations-toggle {
+  margin-top: 8px;
+  border: none;
+  background: transparent;
+  color: var(--color-primary);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 0;
+}
+
+.bubble__citations-toggle:hover {
+  color: var(--color-primary-hover);
+  text-decoration: underline;
 }
 
 .bubble__text code {
@@ -371,10 +390,24 @@ html, body, #root {
 
 .thought-panel__item {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   font-size: 13px;
   color: var(--color-text-muted);
+}
+
+.thought-panel__item-message {
+  flex: 1;
+  min-width: 0;
+}
+
+.thought-panel__item-pills {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
 .thought-panel__step-num {

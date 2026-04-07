@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { parseSSEFrame } from "../lib/sse";
+import { normalizeStatusStep } from "../lib/statusFormat";
 import type { DonePayload } from "../lib/sse";
 import type { ChatMessage, ChatPhase, StatusStep } from "../lib/types";
 
@@ -105,7 +106,7 @@ export function useChat(): UseChatReturn {
             if (ev.event === "status") {
               setStatusSteps((prev) => [
                 ...prev,
-                { message: ev.data.message, tool: ev.data.tool },
+                normalizeStatusStep(ev.data),
               ]);
             } else if (ev.event === "token") {
               accumulated += ev.data;

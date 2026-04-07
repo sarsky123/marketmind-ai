@@ -18,4 +18,7 @@ export type ChatPhase = "idle" | "streaming" | "error";
 export interface StatusStep {
   message: string;
   tool: string;
+  stage?: string;
+  toolDisplay?: string;
+  agent?: string;
 }

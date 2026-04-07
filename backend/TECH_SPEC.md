@@ -114,11 +114,16 @@ All frames use standard SSE: optional `event:` line, one or more `data:` lines, 
 **`event: status`**
 
 ```text
-data: {"message": "...", "tool": "..."}
+data: {"message": "...", "tool": "...", "stage": "...", "tool_display": "...", "agent": "..."}
 ```
 
 - `message` — human-readable step description.
 - `tool` — optional tool name (or empty string if none); use for `ToolStatusIndicator` UIs.
+- `stage` — optional machine-readable phase (e.g. `load_history`, `thinking`, `tool_start`, `tool_done`, `tool_error`, `subagent_start`, `subagent_thinking`, `subagent_tool_start`, `subagent_tool_done`, `subagent_tool_error`).
+- `tool_display` — optional human-friendly tool label (e.g. `Web Search`); clients may prefer this over raw tool ids.
+- `agent` — optional delegated agent identifier for nested activity (e.g. `finance_expert`).
+
+Both orchestrator and delegated sub-agents may emit `status` events during a single streamed response.
 
 **`event: token`**
 

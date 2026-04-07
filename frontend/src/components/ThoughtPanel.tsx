@@ -11,6 +11,8 @@ export function ThoughtPanel({ steps }: Props) {
   if (steps.length === 0) return null;
 
   const lastStep = steps[steps.length - 1];
+  const lastToolLabel = lastStep.toolDisplay ?? "";
+  const lastAgentLabel = lastStep.agent ?? "";
 
   return (
     <div className="thought-panel">
@@ -23,7 +25,8 @@ export function ThoughtPanel({ steps }: Props) {
         <span className="thought-panel__icon">{expanded ? "▾" : "▸"}</span>
         <span className="thought-panel__label">
           {lastStep.message}
-          {lastStep.tool && <span className="thought-panel__tool">{lastStep.tool}</span>}
+          {lastAgentLabel && <span className="thought-panel__tool">{lastAgentLabel}</span>}
+          {lastToolLabel && <span className="thought-panel__tool">{lastToolLabel}</span>}
         </span>
         <span className="thought-panel__count">{steps.length} step{steps.length > 1 ? "s" : ""}</span>
       </button>
@@ -33,8 +36,11 @@ export function ThoughtPanel({ steps }: Props) {
           {steps.map((step, idx) => (
             <li key={idx} className="thought-panel__item">
               <span className="thought-panel__step-num">{idx + 1}</span>
-              <span>{step.message}</span>
-              {step.tool && <span className="thought-panel__tool">{step.tool}</span>}
+              <span className="thought-panel__item-message">{step.message}</span>
+              <span className="thought-panel__item-pills">
+                {step.agent && <span className="thought-panel__tool">{step.agent}</span>}
+                {step.toolDisplay && <span className="thought-panel__tool">{step.toolDisplay}</span>}
+              </span>
             </li>
           ))}
         </ul>

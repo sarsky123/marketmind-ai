@@ -72,6 +72,36 @@ def _merge_citation_refs(citations: list[Citation], refs_value: object) -> None:
         existing_urls.add(url)
 
 
+def _humanize_tool_name(tool_name: str) -> str:
+    labels = {
+        "search_web": "Web Search",
+        "get_asset_price": "Market Data",
+        "clarify_intent": "Clarification",
+        "consult_finance_agent": "Finance Expert",
+    }
+    if tool_name in labels:
+        return labels[tool_name]
+    return tool_name.replace("_", " ").strip().title() or "Tool"
+
+
+def _status_event(
+    *,
+    message: str,
+    tool: str = "",
+    stage: str = "",
+    tool_display: str = "",
+    agent: str = "",
+) -> dict[str, str]:
+    return {
+        "kind": "status",
+        "message": message,
+        "tool": tool,
+        "stage": stage,
+        "tool_display": tool_display,
+        "agent": agent,
+    }
+
+
 def format_history_for_openai(
     rows: list[ChatMessage],
     system_prompt: str,
@@ -111,7 +141,7 @@ async def run_finance_expert(
     specific_task: str,
     config: EngineConfig,
     trace: EngineTrace,
-) -> tuple[str, UsageTotals, list[Citation]]:
+) -> AsyncIterator[dict[str, Any]]:
     """Tight isolation: [system, user task] only; inner tool loop; no DB history."""
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": get_finance_expert_system_prompt()},
@@ -120,10 +150,24 @@ async def run_finance_expert(
     tools = get_openai_tools_for_finance_expert(perm)
     usage = UsageTotals()
     citations: list[Citation] = []
+    yield _status_event(
+        message="Getting financial resources for you...",
+        tool=str(ToolName.CONSULT_FINANCE_AGENT),
+        stage="subagent_start",
+        tool_display="Finance Analysis",
+        agent="finance_expert",
+    )
     rounds = 0
     while rounds < config.max_finance_rounds:
         rounds += 1
         trace.add("finance_expert_round", str(rounds))
+        yield _status_event(
+            message=f"Analyzing financial context (pass {rounds})...",
+            tool=str(ToolName.CONSULT_FINANCE_AGENT),
+            stage="subagent_thinking",
+            tool_display="Finance Analysis",
+            agent="finance_expert",
+        )
         completion = await client.chat.completions.create(
             model=ctx.finance_model,
             messages=messages,
@@ -145,8 +189,32 @@ async def run_finance_expert(
                 name = tc.function.name
                 args = tc.function.arguments or "{}"
                 trace.add("finance_tool", name)
+                tool_display = _humanize_tool_name(name)
+                yield _status_event(
+                    message=f"Getting {tool_display.lower()}...",
+                    tool=name,
+                    stage="subagent_tool_start",
+                    tool_display=tool_display,
+                    agent="finance_expert",
+                )
                 tr = await dispatch_registry_tool(name, args, ctx)
                 _merge_citation_refs(citations, tr.meta.get("refs"))
+                if tr.ok:
+                    yield _status_event(
+                        message=f"{tool_display} complete.",
+                        tool=name,
+                        stage="subagent_tool_done",
+                        tool_display=tool_display,
+                        agent="finance_expert",
+                    )
+                else:
+                    yield _status_event(
+                        message=f"{tool_display} had an issue. Continuing...",
+                        tool=name,
+                        stage="subagent_tool_error",
+                        tool_display=tool_display,
+                        agent="finance_expert",
+                    )
                 content = tr.message if tr.ok else f"Tool error: {tr.message}"
                 messages.append(
                     {
@@ -156,12 +224,19 @@ async def run_finance_expert(
                     }
                 )
             continue
-        return choice.content or "", usage, citations
-    return (
-        "Finance expert stopped after maximum iterations without a final answer.",
-        usage,
-        citations,
-    )
+        yield {
+            "kind": "finance_result",
+            "summary": choice.content or "",
+            "usage_total_tokens": usage.total_tokens,
+            "citations": citations,
+        }
+        return
+    yield {
+        "kind": "finance_result",
+        "summary": "Finance expert stopped after maximum iterations without a final answer.",
+        "usage_total_tokens": usage.total_tokens,
+        "citations": citations,
+    }
 
 
 async def run_orchestrator(
@@ -190,12 +265,12 @@ async def run_orchestrator(
     client = AsyncOpenAI(api_key=ctx.openai_api_key)
     tools = get_openai_tools_for_orchestrator(perm)
 
-    yield {"kind": "status", "message": "Loading conversation…", "tool": ""}
+    yield _status_event(message="Loading conversation...", stage="load_history")
     rows = await repo.list_messages(session_id)
     await repo.add_message(session_id, "user", user_message)
     await db_session.commit()
 
-    yield {"kind": "status", "message": "Thinking…", "tool": ""}
+    yield _status_event(message="Thinking...", stage="thinking")
 
     iteration = 0
     final_text: str | None = None
@@ -232,11 +307,13 @@ async def run_orchestrator(
                 name_str = tc.function.name
                 args = tc.function.arguments or "{}"
                 tool_enum = parse_tool_name(name_str)
-                yield {
-                    "kind": "status",
-                    "message": f"Running {name_str}…",
-                    "tool": name_str,
-                }
+                tool_display = _humanize_tool_name(name_str)
+                yield _status_event(
+                    message=f"Running {tool_display}...",
+                    tool=name_str,
+                    stage="tool_start",
+                    tool_display=tool_display,
+                )
 
                 if tool_enum is ToolName.CONSULT_FINANCE_AGENT:
                     try:
@@ -251,14 +328,32 @@ async def run_orchestrator(
                         task = str(parsed.get("specific_task", ""))
                         trace.add(str(ToolName.CONSULT_FINANCE_AGENT), task[:200])
                         try:
-                            summary, u_fin, fin_citations = await run_finance_expert(
+                            summary = ""
+                            fin_usage_tokens = 0
+                            fin_citations: list[Citation] = []
+                            async for fin_ev in run_finance_expert(
                                 ctx=ctx,
                                 perm=perm,
                                 client=client,
                                 specific_task=task,
                                 config=config,
                                 trace=trace,
-                            )
+                            ):
+                                if fin_ev.get("kind") == "status":
+                                    yield fin_ev
+                                elif fin_ev.get("kind") == "finance_result":
+                                    summary = str(fin_ev.get("summary", ""))
+                                    fin_usage_tokens = int(fin_ev.get("usage_total_tokens", 0))
+                                    raw_citations = fin_ev.get("citations", [])
+                                    if isinstance(raw_citations, list):
+                                        fin_citations = [
+                                            c
+                                            for c in raw_citations
+                                            if isinstance(c, dict)
+                                            and isinstance(c.get("title"), str)
+                                            and isinstance(c.get("url"), str)
+                                            and isinstance(c.get("index"), int)
+                                        ]
                         except Exception as exc:  # noqa: BLE001
                             tr = ToolRunResult(
                                 ok=False,
@@ -266,7 +361,7 @@ async def run_orchestrator(
                                 meta={},
                             )
                         else:
-                            usage_total.total_tokens += u_fin.total_tokens
+                            usage_total.total_tokens += fin_usage_tokens
                             tr = ToolRunResult(
                                 ok=True,
                                 message=summary,
@@ -333,6 +428,9 @@ def map_engine_event_to_sse(event: dict[str, Any]) -> tuple[str, object]:
         return "status", {
             "message": event.get("message", ""),
             "tool": event.get("tool", "") or "",
+            "stage": event.get("stage", "") or "",
+            "tool_display": event.get("tool_display", "") or "",
+            "agent": event.get("agent", "") or "",
         }
     if kind == "token":
         return "token", event.get("text", "")

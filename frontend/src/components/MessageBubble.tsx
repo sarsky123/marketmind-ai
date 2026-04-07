@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { ChatMessage } from "../lib/types";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
@@ -62,6 +63,13 @@ const markdownComponents: Components = {
 export function MessageBubble({ message }: Props) {
   const isUser = message.role === "user";
   const content = message.content ?? "";
+  const [showAllCitations, setShowAllCitations] = useState(false);
+  const citationThreshold = 5;
+  const safeCitations =
+    message.citations?.filter((citation) => sanitizeLinkHref(citation.url) !== undefined) ?? [];
+  const hasHiddenCitations = safeCitations.length > citationThreshold;
+  const displayedCitations =
+    hasHiddenCitations && !showAllCitations ? safeCitations.slice(0, citationThreshold) : safeCitations;
 
   return (
     <div className={`bubble-row ${isUser ? "bubble-row--user" : "bubble-row--assistant"}`}>
@@ -73,26 +81,40 @@ export function MessageBubble({ message }: Props) {
             <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
               {content}
             </ReactMarkdown>
-            {!!message.citations?.length && (
-              <div className="bubble__citations" aria-label="Citations">
-                {message.citations.map((citation) => {
-                  const safeHref = sanitizeLinkHref(citation.url);
-                  if (!safeHref) {
-                    return null;
-                  }
-                  return (
-                    <a
-                      key={`${citation.index}-${citation.url}`}
-                      className="bubble__citation-chip"
-                      href={safeHref}
-                      target="_blank"
-                      rel="noreferrer noopener"
-                      title={citation.title}
-                    >
-                      [{citation.index}] {citation.title}
-                    </a>
-                  );
-                })}
+            {!!safeCitations.length && (
+              <div className="bubble__citations-wrap">
+                <div className="bubble__citations" aria-label="Citations">
+                  {displayedCitations.map((citation) => {
+                    const safeHref = sanitizeLinkHref(citation.url);
+                    if (!safeHref) {
+                      return null;
+                    }
+                    return (
+                      <a
+                        key={`${citation.index}-${citation.url}`}
+                        className="bubble__citation-chip"
+                        href={safeHref}
+                        target="_blank"
+                        rel="noreferrer noopener"
+                        title={citation.title}
+                      >
+                        [{citation.index}] {citation.title}
+                      </a>
+                    );
+                  })}
+                </div>
+                {hasHiddenCitations && (
+                  <button
+                    type="button"
+                    className="bubble__citations-toggle"
+                    onClick={() => setShowAllCitations((v) => !v)}
+                    aria-expanded={showAllCitations}
+                  >
+                    {showAllCitations
+                      ? "Show fewer sources"
+                      : `Show ${safeCitations.length - citationThreshold} more sources`}
+                  </button>
+                )}
               </div>
             )}
           </div>

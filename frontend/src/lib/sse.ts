@@ -1,6 +1,12 @@
 import type { Citation } from "./types";
 
-export type StatusPayload = { message: string; tool: string };
+export type StatusPayload = {
+  message: string;
+  tool: string;
+  stage?: string;
+  tool_display?: string;
+  agent?: string;
+};
 export type DonePayload = {
   stop_reason: string;
   usage?: { total_tokens?: number };
@@ -21,9 +27,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function normalizeStatus(value: unknown): StatusPayload | null {
   if (!isRecord(value) || typeof value.message !== "string") return null;
   const tool = value.tool;
+  const stage = value.stage;
+  const toolDisplay = value.tool_display;
+  const agent = value.agent;
   return {
     message: value.message,
     tool: typeof tool === "string" ? tool : "",
+    stage: typeof stage === "string" ? stage : undefined,
+    tool_display: typeof toolDisplay === "string" ? toolDisplay : undefined,
+    agent: typeof agent === "string" ? agent : undefined,
   };
 }
 
