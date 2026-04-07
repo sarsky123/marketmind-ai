@@ -15,3 +15,6 @@ __pycache__
 # Local-only structural reference clones (not part of the repo)
 reference/
 
+# Local Cursor skills metadata
+.claude/skills/
+
