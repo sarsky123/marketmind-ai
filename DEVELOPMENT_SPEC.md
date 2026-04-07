@@ -1,5 +1,15 @@
 # Development Spec: Multi-Agent Search Chatbot
 
+**Documentation map (three-tier, avoid context bloat):**
+
+- **Product spec, scope, and architecture decisions:** [README.md](README.md)
+- **Backend and AI engine (schema, agents, normative SSE):** [backend/TECH_SPEC.md](backend/TECH_SPEC.md)
+- **Frontend and UI/UX (components, `useChat`, SSE parsing):** [frontend/TECH_SPEC.md](frontend/TECH_SPEC.md)
+
+This file remains the **assignment baseline**: stack, storage rules, multi-agent intent, UX requirements, and README section checklist for grading. If the README SSE summary and §9 below ever disagree with `backend/TECH_SPEC.md`, **the TECH_SPEC wins** for wire-format details.
+
+---
+
 ## 1. System Overview
 
 This project is a web-search-enabled AI chatbot built on a decoupled architecture. The system utilizes a multi-agent approach to accurately determine user intent, executing web searches only when necessary. The final response must be delivered via text streaming with inline source citations. The project emphasizes **robust system design**, **enterprise-grade deployment strategies**, and **exceptional UI/UX**.
@@ -96,7 +106,7 @@ Integrate the following so answers stay timely, accurate, and **grounded** (no f
 ## 9. API and Streaming Interfaces
 
 - **Endpoint:** `POST /api/chat/stream`
-- **Request** (implement with Pydantic; shape may extend as needed):
+- **Request** (implement with Pydantic; shape may extend as needed — e.g. `session_id` + `message` per Phase 2):
 
 ```json
 {
@@ -106,10 +116,7 @@ Integrate the following so answers stay timely, accurate, and **grounded** (no f
 }
 ```
 
-**SSE (multi-stage):**
-
-- `event: status` → `data: {"message": "Agent is searching..."}` — powers **rich execution feedback**.
-- `event: token` → `data: {"text": "According to..."}` — powers the **typewriter** / streaming text.
+**SSE (normative contract):** Defined in **[backend/TECH_SPEC.md](backend/TECH_SPEC.md)** (and mirrored in **[frontend/TECH_SPEC.md](frontend/TECH_SPEC.md)**): `status` (JSON with `message` and `tool`), `token` (**JSON string** chunks), terminal `done` / `error` payloads.
 
 **Protections on this endpoint (see §4.B):** Redis-backed **rate limiting** (`fastapi-limiter`) and **idempotency** / deduplication for duplicate rapid requests.
 

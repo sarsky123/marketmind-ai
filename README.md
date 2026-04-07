@@ -1,6 +1,76 @@
-# Multi-Agent Search Chatbot
+# AI Financial Assistant
 
-This repository is a “walking skeleton” for a multi-agent, web-search-enabled AI chatbot. It scaffolds a hybrid local environment (React + FastAPI + Postgres + Redis) and validates SSE streaming end-to-end.
+Multi-agent, web-search and market-data–aware chat assistant. The repo provides a hybrid local stack (React + FastAPI + PostgreSQL + Redis) and streams answers with **inline source citations** grounded in tool output.
+
+**Technical deep dives (decoupled docs):**
+
+- **Backend and AI engine:** [backend/TECH_SPEC.md](backend/TECH_SPEC.md)
+- **Frontend and UI/UX:** [frontend/TECH_SPEC.md](frontend/TECH_SPEC.md)
+- **Assignment / coursework baseline:** [DEVELOPMENT_SPEC.md](DEVELOPMENT_SPEC.md) (stack, grading-related requirements, test cases)
+
+---
+
+## Core functional requirements
+
+| ID | Requirement |
+| --- | --- |
+| **FR-1** | **Multi-agent routing:** An orchestrator decides when to answer directly vs. invoke tools or delegate to a finance-focused sub-agent. |
+| **FR-2** | **Source citation:** Responses that use retrieved content must cite sources (e.g. `[1]` and references tied to tool results / URLs). |
+| **FR-3** | **Real-time / fresh data:** When the user needs current quotes, news, or macro context, the system uses **Tavily** (search) and/or **yfinance** (market data), not model guesses. |
+| **FR-4** | **Tool calling:** OpenAI function calling with a **registry** of allowed tools; orchestrator and finance expert see **different, filtered** tool surfaces. |
+| **FR-5** | **Streaming UX:** Final answer text streams over **SSE**; the UI shows a **thought process** line driven by `status` events (see [backend/TECH_SPEC.md](backend/TECH_SPEC.md) § SSE API Contract). |
+
+---
+
+## High-level multi-agent architecture
+
+```mermaid
+flowchart LR
+  subgraph client [Client]
+    UI[React_UI]
+  end
+  subgraph backend [Backend]
+    API[FastAPI_SSE]
+    Orch[Orchestrator]
+    Fin[FinanceExpert]
+    Tools[ToolRegistry]
+    PG[(Postgres)]
+  end
+  UI -->|POST_chat_stream| API
+  API --> Orch
+  Orch -->|ConsultFinanceAgent_task| Fin
+  Orch --> Tools
+  Fin --> Tools
+  Orch --> PG
+```
+
+- **Orchestrator:** Loads session history from **Postgres**, runs a **bounded** tool loop (see Scope below), may call web search / clarify intent / delegate.
+- **Finance expert:** Invoked only via delegation; **tight context isolation** — it sees `[system + user task]` only, not full chat history ([backend/TECH_SPEC.md](backend/TECH_SPEC.md)).
+- **Persistence:** **PostgreSQL** is the source of truth for sessions and messages; **Redis** is ephemeral (cache, limits, dedupe — see Scope).
+
+---
+
+## Scope definition and V1 trade-offs
+
+### In scope (V1)
+
+- **Bounded agent loops** (`max_orchestrator_rounds`, `max_finance_rounds`); on exceed → terminal **`error`** SSE (see TECH_SPEC).
+- **Tight context isolation** for the finance expert: clean `[system, task]` thread; only the final expert text returns to the orchestrator transcript.
+- **Postgres for chat history**; **not** Redis for durable messages.
+- **Tool registry** with allowlisted names; structured tool results; permission-filtered tool lists per agent role.
+- **SSE contract** with `status`, `token`, terminal `done` / `error` (normative shapes in TECH_SPEC files).
+- **Graceful cancellation:** client **AbortController**; server **`asyncio.CancelledError`** handling on the stream.
+- **Orchestrator-only** history window (`max_context_messages`) when building context from the DB.
+
+### Out of scope or deferred (V1)
+
+- **Document compaction / long-thread summarization** pipelines (optional later).
+- **Pre/post tool hooks**, **MCP**, **multi-provider** LLM abstraction.
+- **Persisting** finance expert internal mini-thread rows by default (optional debug flag later).
+- **Rate limiting / idempotency** on `POST /api/chat/stream` (recommended in DEVELOPMENT_SPEC §4.B; can follow in a later milestone).
+- Full **mock-LLM CI matrix**; prefer **targeted** tests with mocked HTTP.
+
+---
 
 ## Project Startup & Environment Setup
 
@@ -13,8 +83,11 @@ This repository is a “walking skeleton” for a multi-agent, web-search-enable
    ```
 
 2. Ensure `backend/.env` contains valid connection strings:
-   - `DATABASE_URL` (PostgreSQL, for example local Docker Postgres)
-   - `REDIS_URL` (Redis)
+
+   - `DATABASE_URL` (PostgreSQL; local Docker or Neon)
+   - `REDIS_URL` (Redis; local or Upstash)
+
+See [backend/TECH_SPEC.md](backend/TECH_SPEC.md) for API keys used by the AI engine (`OPENAI_API_KEY`, `TAVILY_API_KEY`, etc.).
 
 ### 2. Start the local hybrid stack (Docker)
 
@@ -31,6 +104,7 @@ make up
 ```
 
 Expected ports:
+
 - Frontend (Vite): `http://localhost:5173`
 - Backend (FastAPI): `http://localhost:8000`
 - RedisInsight UI: `http://localhost:5540`
@@ -41,63 +115,56 @@ Expected ports:
 docker-compose down
 ```
 
+---
+
 ## Architecture Design
 
-### Multi-agent flow (Router–Worker)
+### Hybrid deployment
 
-The intended architecture follows a Router–Worker pattern:
-- **Agent 1 (Orchestrator / Router):** determines whether the user needs fresh external data; routes requests accordingly.
-- **Agent 2 (Researcher / Worker):** executes external tools (e.g., Tavily and yfinance) and produces grounded responses with inline citations.
+Behavior is driven by **environment variables** (`.env`): **local** = root `docker-compose.yml` (frontend, backend, Postgres, Redis); **production** = frontend (Vercel/Netlify), backend (Render/Railway), Postgres (Neon or equivalent), Redis (Upstash or equivalent). Same codebase; no host hardcoding — use `DATABASE_URL` and `REDIS_URL`.
 
-This walking-skeleton phase does not implement the agent logic yet, but it validates the plumbing:
-- **Streaming endpoint:** `POST /api/chat/stream`
-- **SSE events:**
-  - `event: status` → `{ "message": "..." }` (rich execution feedback)
-  - `event: token` → `{ "text": "..." }` (token streaming / typewriter effect)
+### PostgreSQL vs Redis
 
-### Hybrid deployment strategy (local vs production)
+| Store | Role |
+| --- | --- |
+| **PostgreSQL** | **Source of truth:** `User`, `ChatSession`, `ChatMessage` (and tool metadata columns). Full conversation history for context assembly. |
+| **Redis** | **Ephemeral:** Tavily/yfinance response cache (TTL ~300s), rate limits, request dedupe — **not** chat logs. |
 
-The system is designed to run in two environments, controlled by `.env` configuration:
-- **Local development (Dockerized):** `docker-compose.yml` runs `frontend`, `backend`, `postgres`, and `redis`.
-- **Production (serverless-oriented):** frontend on Vercel/Netlify; backend on Render/Railway; Postgres on Neon (or equivalent); Redis on Upstash (or equivalent).
-
-### PostgreSQL + Redis responsibilities (source of truth vs performance)
-
-- **PostgreSQL (source of truth):** persistence for durable chat/session state (e.g., `ChatSession`, `ChatMessage`).
-- **Redis (ephemeral):** API caching, rate limiting, and request deduplication.
-
-Schema state in this phase:
-- Alembic/SQLModel wiring is set up.
-- The initial revision is currently a no-op (`0001_initial`), so there are no user tables yet.
+Schema and column-level detail: [backend/TECH_SPEC.md](backend/TECH_SPEC.md).
 
 ### Migrations
 
-The backend runs:
-1. `alembic upgrade head`
-2. then starts the FastAPI server.
-
-So schema changes should be applied via Alembic before startup.
-
-## AI Tools Usage
-
-This phase used Cursor to scaffold the initial repository structure and wiring.
-
-Example prompts used (for traceability):
-- “Generate a root `docker-compose.yml` with frontend, backend, Postgres 15, Redis, and RedisInsight.”
-- “Create FastAPI endpoints for `/health` and dummy SSE `POST /api/chat/stream` with correct event framing.”
-- “Scaffold a minimal Vite + React + TypeScript UI that calls `/health` and renders streamed `event: token` text.”
-
-## Developer Ergonomics (Makefile)
-
-Use the Makefile for local schema evolution without restarting containers:
+The backend runs `alembic upgrade head` then starts FastAPI. Use the Makefile for local workflow:
 
 ```bash
 make db-upgrade
+make db-migrate MSG="describe_change"
 ```
 
-Create a new Alembic migration:
+---
+
+## AI Tools Usage
+
+This project was bootstrapped with AI-assisted tooling (e.g. Cursor).
+
+Example prompts used for traceability:
+
+- “Generate a root `docker-compose.yml` with frontend, backend, Postgres 15, Redis, and RedisInsight.”
+- “Create FastAPI endpoints for `/health` and dummy SSE `POST /api/chat/stream` with correct event framing.”
+- “Scaffold a minimal Vite + React + TypeScript UI that consumes SSE.”
+- Planning iterations: multi-agent Phase 2 plan, scope-limited runtime adoption, three-tier docs (README + `backend/TECH_SPEC.md` + `frontend/TECH_SPEC.md`).
+
+---
+
+## Developer ergonomics (Makefile)
 
 ```bash
+make db-upgrade
 make db-migrate MSG="add_new_tables"
 ```
 
+---
+
+## Engineering standards
+
+See [.cursor/rules/senior-review-and-engineering-standards.mdc](.cursor/rules/senior-review-and-engineering-standards.mdc) and [DEVELOPMENT_SPEC.md](DEVELOPMENT_SPEC.md) for review expectations, testing ideas, and assignment checklist.
