@@ -1,9 +1,7 @@
 """SQLModel persistence: users, chat sessions, messages (OpenAI-shaped tool metadata)."""
 
-from __future__ import annotations
-
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Optional
 
 from sqlalchemy import Column, Text
@@ -12,7 +10,8 @@ from sqlmodel import Field, Relationship, SQLModel
 
 
 def utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+    # DB columns are TIMESTAMP WITHOUT TIME ZONE; store UTC as naive datetime.
+    return datetime.utcnow()
 
 
 class User(SQLModel, table=True):
@@ -33,7 +32,7 @@ class ChatSession(SQLModel, table=True):
     title: Optional[str] = Field(default=None)
     created_at: datetime = Field(default_factory=utc_now)
 
-    user: Optional[User] = Relationship(back_populates="sessions")
+    user: Optional["User"] = Relationship(back_populates="sessions")
     messages: list["ChatMessage"] = Relationship(back_populates="session")
 
 
@@ -51,4 +50,5 @@ class ChatMessage(SQLModel, table=True):
     tool_call_id: Optional[str] = Field(default=None, index=True)
     created_at: datetime = Field(default_factory=utc_now)
 
-    session: Optional[ChatSession] = Relationship(back_populates="messages")
+    session: Optional["ChatSession"] = Relationship(back_populates="messages")
+
