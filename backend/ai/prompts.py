@@ -10,7 +10,10 @@ def get_orchestrator_system_prompt() -> str:
     cfa = ToolName.CONSULT_FINANCE_AGENT
     sw = ToolName.SEARCH_WEB
     ci = ToolName.CLARIFY_INTENT
+    st = ToolName.SET_SESSION_TITLE
     return f"""You are the AI Financial Assistant orchestrator. Current UTC time: {now}.
+
+When this is the first message in an empty chat, you must call {st} once with a short topic title before using any other tools.
 
 Route user requests: answer from general knowledge when no fresh market or news data is needed.
 When the user needs current prices, financial metrics, or portfolio-style analysis, call {cfa} with a focused task description.

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal
+
+from typing_extensions import TypedDict
 
 
 class ToolName(StrEnum):
@@ -12,6 +14,7 @@ class ToolName(StrEnum):
     GET_ASSET_PRICE = "get_asset_price"
     CLARIFY_INTENT = "clarify_intent"
     CONSULT_FINANCE_AGENT = "consult_finance_agent"
+    SET_SESSION_TITLE = "set_session_title"
 
 
 def parse_tool_name(name: str) -> ToolName | None:
@@ -30,6 +33,22 @@ class Citation(TypedDict):
     index: int
     title: str
     url: str
+
+
+def parse_stored_citations(raw: object) -> list[Citation] | None:
+    """Parse citation blobs from ``ChatMessage.tool_calls`` JSON (final assistant turn)."""
+    if not isinstance(raw, list) or not raw:
+        return None
+    out: list[Citation] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        idx = item.get("index")
+        title = item.get("title")
+        url = item.get("url")
+        if isinstance(idx, int) and isinstance(title, str) and isinstance(url, str):
+            out.append({"index": idx, "title": title, "url": url})
+    return out or None
 
 
 @dataclass

@@ -4,6 +4,9 @@ import json
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from openai.types.chat import ChatCompletionToolParam
+from pydantic import TypeAdapter
+
 from ai.context import RuntimeContext
 from ai.permissions import ToolPermissionContext, filter_openai_tools
 from ai.tools import (
@@ -15,7 +18,9 @@ from ai.types import ToolName, ToolRunResult, parse_tool_name
 
 ToolHandler = Callable[[RuntimeContext, dict[str, Any]], Awaitable[ToolRunResult]]
 
-_ALL_OPENAI_TOOL_SCHEMAS: list[dict[str, Any]] = [
+_ALL_OPENAI_TOOL_SCHEMAS: list[ChatCompletionToolParam] = TypeAdapter(
+    list[ChatCompletionToolParam]
+).validate_python([
     {
         "type": "function",
         "function": {
@@ -85,7 +90,28 @@ _ALL_OPENAI_TOOL_SCHEMAS: list[dict[str, Any]] = [
             },
         },
     },
-]
+    {
+        "type": "function",
+        "function": {
+            "name": ToolName.SET_SESSION_TITLE,
+            "description": (
+                "Set a short, scannable chat title (summary of the user's request). "
+                "Use 3–8 words, title case or sentence case, no surrounding quotes. "
+                "The system requires this on the first message of a brand-new chat before you do anything else."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {
+                        "type": "string",
+                        "description": "Concise topic label for the sidebar and header (max ~80 characters).",
+                    },
+                },
+                "required": ["title"],
+            },
+        },
+    },
+])
 
 _HANDLERS: dict[ToolName, ToolHandler] = {
     ToolName.SEARCH_WEB: lambda ctx, a: tool_search_web(ctx, str(a["query"])),
@@ -96,11 +122,11 @@ _HANDLERS: dict[ToolName, ToolHandler] = {
 }
 
 
-def get_openai_tools_for_orchestrator(ctx: ToolPermissionContext) -> list[dict[str, Any]]:
+def get_openai_tools_for_orchestrator(ctx: ToolPermissionContext) -> list[ChatCompletionToolParam]:
     return filter_openai_tools(_ALL_OPENAI_TOOL_SCHEMAS, "orchestrator", ctx)
 
 
-def get_openai_tools_for_finance_expert(ctx: ToolPermissionContext) -> list[dict[str, Any]]:
+def get_openai_tools_for_finance_expert(ctx: ToolPermissionContext) -> list[ChatCompletionToolParam]:
     return filter_openai_tools(_ALL_OPENAI_TOOL_SCHEMAS, "finance_expert", ctx)
 
 
@@ -113,6 +139,8 @@ async def dispatch_registry_tool(
     if tn is None:
         return ToolRunResult(ok=False, message=f"Unknown tool: {name}", meta={})
     if tn is ToolName.CONSULT_FINANCE_AGENT:
+        return ToolRunResult(ok=False, message="handled by orchestrator", meta={})
+    if tn is ToolName.SET_SESSION_TITLE:
         return ToolRunResult(ok=False, message="handled by orchestrator", meta={})
     handler = _HANDLERS.get(tn)
     if handler is None:

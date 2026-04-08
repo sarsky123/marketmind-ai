@@ -6,6 +6,11 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from openai import AsyncOpenAI
+from openai.types.chat import (
+    ChatCompletionMessageParam,
+    ChatCompletionMessageToolCallUnionParam,
+)
+from pydantic import TypeAdapter, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ai.context import RuntimeContext
@@ -28,12 +33,16 @@ from ai.types import (
 )
 from models import ChatMessage
 
+_TOOL_CALLS_LIST_ADAPTER = TypeAdapter(list[ChatCompletionMessageToolCallUnionParam])
+_CHAT_MESSAGE_ADAPTER = TypeAdapter(ChatCompletionMessageParam)
+_CHAT_MESSAGES_LIST_ADAPTER = TypeAdapter(list[ChatCompletionMessageParam])
+
 
 def _usage_add(usage: UsageTotals, completion: Any) -> None:
     usage.add_usage_object(getattr(completion, "usage", None))
 
 
-def _tool_calls_to_stored(message: Any) -> list[dict[str, Any]]:
+def _tool_calls_to_stored(message: Any) -> list[ChatCompletionMessageToolCallUnionParam]:
     raw = getattr(message, "tool_calls", None) or []
     out: list[dict[str, Any]] = []
     for tc in raw:
@@ -50,7 +59,18 @@ def _tool_calls_to_stored(message: Any) -> list[dict[str, Any]]:
                 },
             }
         )
-    return out
+    return _TOOL_CALLS_LIST_ADAPTER.validate_python(out)
+
+
+def _is_openai_tool_calls_param_list(raw: object) -> bool:
+    """True when ``raw`` is non-empty and validates as OpenAI chat ``tool_calls`` params."""
+    if not isinstance(raw, list) or len(raw) == 0:
+        return False
+    try:
+        _TOOL_CALLS_LIST_ADAPTER.validate_python(raw)
+    except ValidationError:
+        return False
+    return True
 
 
 def _merge_citation_refs(citations: list[Citation], refs_value: object) -> None:
@@ -78,6 +98,7 @@ def _humanize_tool_name(tool_name: str) -> str:
         "get_asset_price": "Market Data",
         "clarify_intent": "Clarification",
         "consult_finance_agent": "Finance Expert",
+        "set_session_title": "Chat title",
     }
     if tool_name in labels:
         return labels[tool_name]
@@ -106,7 +127,7 @@ def format_history_for_openai(
     rows: list[ChatMessage],
     system_prompt: str,
     max_messages: int | None,
-) -> list[dict[str, Any]]:
+) -> list[ChatCompletionMessageParam]:
     msgs: list[dict[str, Any]] = [{"role": "system", "content": system_prompt}]
     slice_rows = rows
     if max_messages is not None and len(rows) > max_messages:
@@ -120,7 +141,7 @@ def format_history_for_openai(
                     "tool_call_id": m.tool_call_id or "",
                 }
             )
-        elif m.role == "assistant" and m.tool_calls:
+        elif m.role == "assistant" and _is_openai_tool_calls_param_list(m.tool_calls):
             msgs.append(
                 {
                     "role": "assistant",
@@ -130,7 +151,7 @@ def format_history_for_openai(
             )
         else:
             msgs.append({"role": m.role, "content": m.content or ""})
-    return msgs
+    return _CHAT_MESSAGES_LIST_ADAPTER.validate_python(msgs)
 
 
 async def run_finance_expert(
@@ -143,10 +164,12 @@ async def run_finance_expert(
     trace: EngineTrace,
 ) -> AsyncIterator[dict[str, Any]]:
     """Tight isolation: [system, user task] only; inner tool loop; no DB history."""
-    messages: list[dict[str, Any]] = [
-        {"role": "system", "content": get_finance_expert_system_prompt()},
-        {"role": "user", "content": specific_task},
-    ]
+    messages: list[ChatCompletionMessageParam] = _CHAT_MESSAGES_LIST_ADAPTER.validate_python(
+        [
+            {"role": "system", "content": get_finance_expert_system_prompt()},
+            {"role": "user", "content": specific_task},
+        ]
+    )
     tools = get_openai_tools_for_finance_expert(perm)
     usage = UsageTotals()
     citations: list[Citation] = []
@@ -179,11 +202,13 @@ async def run_finance_expert(
         if choice.tool_calls:
             stored = _tool_calls_to_stored(choice)
             messages.append(
-                {
-                    "role": "assistant",
-                    "content": choice.content,
-                    "tool_calls": stored,
-                }
+                _CHAT_MESSAGE_ADAPTER.validate_python(
+                    {
+                        "role": "assistant",
+                        "content": choice.content,
+                        "tool_calls": stored,
+                    }
+                )
             )
             for tc in choice.tool_calls:
                 name = tc.function.name
@@ -217,11 +242,13 @@ async def run_finance_expert(
                     )
                 content = tr.message if tr.ok else f"Tool error: {tr.message}"
                 messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tc.id,
-                        "content": content,
-                    }
+                    _CHAT_MESSAGE_ADAPTER.validate_python(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tc.id,
+                            "content": content,
+                        }
+                    )
                 )
             continue
         yield {
@@ -267,6 +294,7 @@ async def run_orchestrator(
 
     yield _status_event(message="Loading conversation...", stage="load_history")
     rows = await repo.list_messages(session_id)
+    is_first_user_turn = len(rows) == 0
     await repo.add_message(session_id, "user", user_message)
     await db_session.commit()
 
@@ -274,6 +302,7 @@ async def run_orchestrator(
 
     iteration = 0
     final_text: str | None = None
+    pending_forced_title = is_first_user_turn
 
     while iteration < config.max_orchestrator_rounds:
         iteration += 1
@@ -284,14 +313,39 @@ async def run_orchestrator(
             config.max_context_messages,
         )
 
+        force_title_round = pending_forced_title
+        round_tools = [
+            spec
+            for spec in tools
+            if pending_forced_title
+            or (spec.get("function") or {}).get("name")
+            != str(ToolName.SET_SESSION_TITLE)
+        ]
+
+        tool_choice: str | dict[str, Any] = "auto"
+        if force_title_round:
+            tool_choice = {
+                "type": "function",
+                "function": {"name": str(ToolName.SET_SESSION_TITLE)},
+            }
+
         completion = await client.chat.completions.create(
             model=ctx.orchestrator_model,
             messages=oai_messages,
-            tools=tools,
-            tool_choice="auto",
+            tools=round_tools,
+            tool_choice=tool_choice,
         )
         msg = completion.choices[0].message
         _usage_add(usage_total, completion)
+
+        if force_title_round and not msg.tool_calls:
+            pending_forced_title = False
+            fallback = (user_message or "").strip()
+            if fallback:
+                safe_title = fallback[:120]
+                await repo.update_session_title(session_id, safe_title)
+                await db_session.commit()
+                yield {"kind": "session_title", "title": safe_title}
 
         if msg.tool_calls:
             await repo.add_message(
@@ -372,6 +426,29 @@ async def run_orchestrator(
                                     ]
                                 },
                             )
+                elif tool_enum is ToolName.SET_SESSION_TITLE:
+                    try:
+                        parsed = json.loads(args) if args else {}
+                    except json.JSONDecodeError:
+                        tr = ToolRunResult(
+                            ok=False,
+                            message=f"Invalid JSON for {ToolName.SET_SESSION_TITLE}",
+                            meta={},
+                        )
+                    else:
+                        raw_title = str(parsed.get("title", "")).strip()
+                        if not raw_title:
+                            tr = ToolRunResult(
+                                ok=False,
+                                message="Title must be non-empty.",
+                                meta={},
+                            )
+                        else:
+                            safe_title = raw_title[:120]
+                            await repo.update_session_title(session_id, safe_title)
+                            await db_session.commit()
+                            yield {"kind": "session_title", "title": safe_title}
+                            tr = ToolRunResult(ok=True, message="Title updated.", meta={})
                 elif tool_enum is None:
                     tr = ToolRunResult(
                         ok=False,
@@ -391,6 +468,8 @@ async def run_orchestrator(
                     tool_call_id=tc.id,
                 )
                 await db_session.commit()
+            if force_title_round:
+                pending_forced_title = False
             continue
 
         final_text = msg.content or ""
@@ -407,7 +486,18 @@ async def run_orchestrator(
     if final_text is None:
         final_text = ""
 
-    await repo.add_message(session_id, "assistant", final_text)
+    citation_payload: list[Citation] | None = None
+    if citations:
+        citation_payload = [
+            {"index": c["index"], "title": c["title"], "url": c["url"]}
+            for c in citations
+        ]
+    await repo.add_message(
+        session_id,
+        "assistant",
+        final_text,
+        tool_calls=citation_payload,
+    )
     await db_session.commit()
 
     chunk_size = 24
@@ -434,6 +524,8 @@ def map_engine_event_to_sse(event: dict[str, Any]) -> tuple[str, object]:
         }
     if kind == "token":
         return "token", event.get("text", "")
+    if kind == "session_title":
+        return "session_title", {"title": str(event.get("title", ""))}
     if kind == "done":
         return "done", {
             "stop_reason": event.get("stop_reason", "completed"),

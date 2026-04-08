@@ -14,9 +14,12 @@ export type DonePayload = {
 };
 export type ErrorPayload = { message: string; code: number };
 
+export type SessionTitlePayload = { title: string };
+
 export type ParsedEvent =
   | { event: "status"; data: StatusPayload }
   | { event: "token"; data: string }
+  | { event: "session_title"; data: SessionTitlePayload }
   | { event: "done"; data: DonePayload }
   | { event: "error"; data: ErrorPayload };
 
@@ -64,6 +67,10 @@ function isErrorPayload(value: unknown): value is ErrorPayload {
   return typeof value.message === "string" && typeof value.code === "number";
 }
 
+function isSessionTitlePayload(value: unknown): value is SessionTitlePayload {
+  return isRecord(value) && typeof value.title === "string";
+}
+
 export function parseSSEFrame(frame: string): ParsedEvent | null {
   const lines = frame
     .split("\n")
@@ -94,6 +101,9 @@ export function parseSSEFrame(frame: string): ParsedEvent | null {
     }
     if (eventName === "token" && typeof parsedJson === "string") {
       return { event: "token", data: parsedJson };
+    }
+    if (eventName === "session_title" && isSessionTitlePayload(parsedJson)) {
+      return { event: "session_title", data: parsedJson };
     }
     if (eventName === "done" && isDonePayload(parsedJson)) {
       return { event: "done", data: parsedJson };

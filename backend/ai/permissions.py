@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from openai.types.chat import ChatCompletionToolParam
+
 from ai.types import AgentRole, ToolName, parse_tool_name
 
 
@@ -18,6 +20,7 @@ ORCHESTRATOR_TOOLS: frozenset[ToolName] = frozenset(
         ToolName.GET_ASSET_PRICE,
         ToolName.CLARIFY_INTENT,
         ToolName.CONSULT_FINANCE_AGENT,
+        ToolName.SET_SESSION_TITLE,
     }
 )
 FINANCE_EXPERT_TOOLS: frozenset[ToolName] = frozenset(
@@ -34,14 +37,16 @@ def allowed_tools_for_agent(role: AgentRole, ctx: ToolPermissionContext) -> froz
 
 
 def filter_openai_tools(
-    schemas: list[dict],
+    schemas: list[ChatCompletionToolParam],
     role: AgentRole,
     ctx: ToolPermissionContext,
-) -> list[dict]:
+) -> list[ChatCompletionToolParam]:
     allowed = allowed_tools_for_agent(role, ctx)
-    out: list[dict] = []
+    out: list[ChatCompletionToolParam] = []
     for spec in schemas:
-        fn = spec.get("function", {})
+        fn = spec.get("function")
+        if fn is None:
+            continue
         raw = fn.get("name")
         if not isinstance(raw, str):
             continue
