@@ -81,9 +81,11 @@ class ToolRunResult:
 
 @dataclass
 class EngineConfig:
-    max_orchestrator_rounds: int = 20
-    max_finance_rounds: int = 15
-    max_context_messages: int | None = 60
+    """Engine tuning; construct via `EngineConfig` from application settings (no defaults here)."""
+
+    max_orchestrator_rounds: int
+    max_finance_rounds: int
+    max_context_messages: int | None
 
 
 @dataclass

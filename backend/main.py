@@ -13,7 +13,7 @@ import asyncpg
 import redis.asyncio as redis
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,18 +21,26 @@ from ai.agents import map_engine_event_to_sse, run_orchestrator
 from ai.context import build_runtime_context
 from ai.permissions import ToolPermissionContext
 from ai.repository import ChatRepository
-from ai.types import Citation, EngineConfig, parse_stored_citations
+from ai.types import Citation, parse_stored_citations
+from auth.middleware import ProtectApiMiddleware
+from auth.routes import router as auth_router
+from config import get_engine_config, get_settings
 from db import get_db_session, get_engine, get_redis_client
+
+_settings = get_settings()
 
 app = FastAPI(title="AI Financial Assistant API")
 
+app.add_middleware(ProtectApiMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=_settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(auth_router)
 
 
 class CreateSessionRequest(BaseModel):
@@ -148,6 +156,20 @@ async def list_sessions(
     ]
 
 
+@app.delete("/api/sessions/{session_id}", status_code=204)
+async def delete_session(
+    session_id: uuid.UUID,
+    user_id: uuid.UUID,
+    db_session: AsyncSession = Depends(get_db_session),
+) -> Response:
+    repo = ChatRepository(db_session)
+    deleted = await repo.delete_session_owned_by(session_id, user_id)
+    if not deleted:
+        return Response(status_code=404)
+    await db_session.commit()
+    return Response(status_code=204)
+
+
 @app.get("/api/sessions/{session_id}/messages", response_model=list[ChatMessageResponse])
 async def list_session_messages(
     session_id: uuid.UUID,
@@ -174,7 +196,7 @@ async def list_session_messages(
 async def chat_stream(body: ChatStreamRequest) -> StreamingResponse:
     redis_client = get_redis_client()
     engine = get_engine()
-    config = EngineConfig()
+    config = get_engine_config()
     perm = ToolPermissionContext()
 
     async def _gen() -> AsyncIterator[str]:
@@ -189,7 +211,7 @@ async def chat_stream(body: ChatStreamRequest) -> StreamingResponse:
                     )
                     return
 
-                ctx = build_runtime_context(redis_client)
+                ctx = build_runtime_context(redis_client, _settings)
                 async for ev in run_orchestrator(
                     db_session=db_session,
                     repo=repo,

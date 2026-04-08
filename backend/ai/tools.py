@@ -27,7 +27,7 @@ async def tool_search_web(ctx: RuntimeContext, query: str) -> ToolRunResult:
 
         def _search() -> object:
             client = TavilyClient(api_key=ctx.tavily_api_key)
-            return client.search(query=query, max_results=5)
+            return client.search(query=query, max_results=ctx.tavily_max_results)
 
         data = await asyncio.to_thread(_search)
     except Exception as exc:  # noqa: BLE001
@@ -90,7 +90,7 @@ async def tool_get_asset_price(ctx: RuntimeContext, ticker: str) -> ToolRunResul
         return ToolRunResult(ok=False, message=f"Price lookup failed: {exc}", meta={})
 
     try:
-        await ctx.redis.set(key, text, ex=300)
+        await ctx.redis.set(key, text, ex=ctx.yfinance_cache_ttl_seconds)
     except Exception:
         pass
     return ToolRunResult(ok=True, message=text, meta={"cached": False})

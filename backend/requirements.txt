@@ -3,6 +3,7 @@ uvicorn[standard]
 sqlmodel
 alembic
 redis
+PyJWT
 asyncpg
 openai>=1.40.0
 yfinance

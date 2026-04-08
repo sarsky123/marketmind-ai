@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 from typing import Any, Optional
 
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
@@ -44,6 +45,23 @@ class ChatRepository:
             return
         sess.title = title
         await self._session.flush()
+
+    async def delete_session_owned_by(
+        self,
+        session_id: uuid.UUID,
+        user_id: uuid.UUID,
+    ) -> bool:
+        sess = await self._session.get(ChatSession, session_id)
+        if sess is None or sess.user_id != user_id:
+            return False
+        await self._session.execute(
+            delete(ChatMessage).where(ChatMessage.session_id == session_id),
+        )
+        await self._session.execute(
+            delete(ChatSession).where(ChatSession.id == session_id),
+        )
+        await self._session.flush()
+        return True
 
     async def list_sessions(self, user_id: uuid.UUID) -> list[ChatSession]:
         stmt = (
