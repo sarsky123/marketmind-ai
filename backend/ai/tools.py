@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import time
 from datetime import datetime, timezone
 
 from ai.context import RuntimeContext
@@ -14,26 +16,50 @@ from ai.external_api import (
 from ai.types import ToolRunResult, ToolWebRef
 from pydantic import ValidationError
 
+logger = logging.getLogger(__name__)
+
 
 async def tool_search_web(ctx: RuntimeContext, query: str) -> ToolRunResult:
     if not ctx.tavily_configured or not ctx.tavily_api_key:
+        logger.warning("search_web skipped: Tavily not configured")
         return ToolRunResult(
             ok=False,
             message="Tavily is not configured (missing TAVILY_API_KEY).",
             meta={},
         )
+    q = query.strip()
+    logger.info(
+        "search_web start query=%r max_results=%s",
+        q[:200],
+        ctx.tavily_max_results,
+    )
+    started = time.perf_counter()
     try:
         from tavily import TavilyClient
 
         def _search() -> object:
             client = TavilyClient(api_key=ctx.tavily_api_key)
-            return client.search(query=query, max_results=ctx.tavily_max_results)
+            return client.search(query=q, max_results=ctx.tavily_max_results)
 
         data = await asyncio.to_thread(_search)
     except Exception as exc:  # noqa: BLE001
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        logger.exception(
+            "search_web Tavily call failed query=%r elapsed_ms=%s error=%s",
+            q[:200],
+            elapsed_ms,
+            exc,
+        )
         return ToolRunResult(ok=False, message=f"Search failed: {exc}", meta={})
 
     if not isinstance(data, dict):
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        logger.error(
+            "search_web unexpected Tavily response type=%s query=%r elapsed_ms=%s",
+            type(data).__name__,
+            q[:200],
+            elapsed_ms,
+        )
         return ToolRunResult(
             ok=False,
             message="Unexpected Tavily response (expected JSON object).",
@@ -42,6 +68,13 @@ async def tool_search_web(ctx: RuntimeContext, query: str) -> ToolRunResult:
     try:
         payload = parse_tavily_search_response(data)
     except ValidationError as exc:
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        logger.warning(
+            "search_web invalid Tavily payload query=%r elapsed_ms=%s error=%s",
+            q[:200],
+            elapsed_ms,
+            exc,
+        )
         return ToolRunResult(
             ok=False,
             message=f"Invalid Tavily response shape: {exc}",
@@ -49,6 +82,13 @@ async def tool_search_web(ctx: RuntimeContext, query: str) -> ToolRunResult:
         )
 
     results = tavily_results(payload)
+    elapsed_ms = int((time.perf_counter() - started) * 1000)
+    logger.info(
+        "search_web success query=%r elapsed_ms=%s results=%s",
+        q[:200],
+        elapsed_ms,
+        len(results),
+    )
     if not results:
         return ToolRunResult(ok=True, message="No results.", meta={"refs": []})
     lines: list[str] = []

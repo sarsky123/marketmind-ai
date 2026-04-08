@@ -7,6 +7,7 @@ library's concrete ``Ticker`` and ``FastInfo`` types from their published module
 
 from __future__ import annotations
 
+import logging
 from typing import cast
 
 import pandas as pd
@@ -37,11 +38,16 @@ class TavilySearchResponse(TypedDict, total=False):
 
 
 _TAVILY_SEARCH_ADAPTER = TypeAdapter(TavilySearchResponse)
+logger = logging.getLogger(__name__)
 
 
 def parse_tavily_search_response(data: object) -> TavilySearchResponse:
     """Validate/normalize Tavily ``search`` JSON; raises ``ValidationError`` if unusable."""
-    return _TAVILY_SEARCH_ADAPTER.validate_python(data)
+    try:
+        return _TAVILY_SEARCH_ADAPTER.validate_python(data)
+    except ValidationError:
+        logger.exception("parse_tavily_search_response failed")
+        raise
 
 
 def tavily_results(payload: TavilySearchResponse) -> list[TavilySearchResult]:
