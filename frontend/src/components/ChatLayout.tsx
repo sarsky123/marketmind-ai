@@ -223,16 +223,14 @@ export function ChatLayout() {
                       onClick={(e) => {
                         e.stopPropagation();
                         const nextId = session.session_id;
-                        setMenuOpenSessionId((id) => {
-                          const next = id === nextId ? null : nextId;
-                          if (next) {
-                            const rect = (e.currentTarget as HTMLButtonElement).getBoundingClientRect();
-                            setMenuAnchor(rect);
-                          } else {
-                            setMenuAnchor(null);
-                          }
-                          return next;
-                        });
+                        if (isMenuOpen) {
+                          setMenuOpenSessionId(null);
+                          setMenuAnchor(null);
+                          return;
+                        }
+                        const rect = (e.currentTarget as HTMLButtonElement).getBoundingClientRect();
+                        setMenuAnchor(rect);
+                        setMenuOpenSessionId(nextId);
                       }}
                     >
                       <span className="chat-sidebar__item-kebab-icon" aria-hidden>
