@@ -169,7 +169,60 @@ data: {"message": "...", "code": 500}
 - **Redis:** `REDIS_URL`; **`redis.asyncio`** for non-blocking I/O.
 - **OpenAI:** `OPENAI_API_KEY`; async client in agent loop.
 - **Tavily:** `TAVILY_API_KEY` for search tool.
-- **yfinance:** typically no API key; cache JSON in Redis with composite key and **TTL ~300s** (e.g. `cache:yfinance:{TICKER}:{UTC_DATE}`).
+- **yfinance:** typically no API key; cache JSON in Redis with composite key and **TTL** from `YFINANCE_CACHE_TTL_SECONDS` (default **300s**; key shape `cache:yfinance:{TICKER}:{UTC_DATE}`).
+- **Anonymous auth / cost control** (see dedicated section below): `AUTH_JWT_SECRET`, `MAX_DAILY_VISITORS`, `VISITOR_QUOTA`, `INVITE_QUOTA`, `INVITE_TTL_SECONDS` (default **604800**, one week, for Redis `invite:{token}` keys from the CLI), `RATE_LIMIT_PER_MIN`, `JWT_*`, `COOKIE_*`, `CORS_ORIGINS`, `CLIENT_IP_TRUST_PROXY`. Central loader: [`config.py`](config.py); `invite_ttl_seconds` reflects **`INVITE_TTL_SECONDS`** (CLI reads the same variable when writing Redis).
+
+---
+
+## Anonymous JWT authentication and API cost controls
+
+This stack uses **invite-aware anonymous JWTs** in an **HttpOnly cookie** plus **Redis** for daily visitor caps, per-browser-session API quotas, and IP throttling. **PostgreSQL** remains the source of truth for chat rows; the JWT claim `session_id` is an **auth session id** used only for Redis keys (`quota:{session_id}`), not the `ChatSession` primary key.
+
+### End-to-end flow
+
+1. The SPA calls `GET /api/auth/me` with **`credentials: "include"`** (same origin via the Vite proxy).
+2. If unauthenticated (`401`), the client reads `?invite=` from the URL (if present) and calls `POST /api/auth/anonymous` with `{ "invite": "<optional>" }`.
+3. On success the API responds with **`Set-Cookie: session_token=...`** (`HttpOnly`, `Secure` and `SameSite` from env — use `SameSite=None` + `Secure=true` for cross-site production frontends).
+4. Every protected `/api/*` request includes the cookie. **Middleware** (after CORS) enforces **IP rate limits** and **JWT + quota** before route handlers run. **One successful HTTP request consumes one quota unit** at the edge (including `POST /api/chat/stream`), so one chat turn decrements quota once even though the body streams.
+
+### Visitor and invited users
+
+| Mode | Condition | JWT `role` | Initial quota (Redis) |
+| --- | --- | --- | --- |
+| Visitor | No invite; must increment global daily key under cap | `visitor` | `VISITOR_QUOTA` |
+| Invited | `invite:{code}` exists in Redis with `"status": "active"` | `invited` | `INVITE_QUOTA` |
+
+- **Daily visitor gate:** Redis key `visitors:{YYYY-MM-DD}` (UTC). Only the **no-invite** path increments this counter when minting a token. If the cap is exceeded, `/api/auth/anonymous` returns **403** (`daily_visitor_limit`).
+- **Invalid invite:** If the client sends a non-empty `invite` that is missing or not active, the API returns **400** (`invalid_invite`) — it does **not** fall back silently to the visitor path.
+
+### Redis key taxonomy
+
+| Key pattern | Purpose |
+| --- | --- |
+| `visitors:{YYYY-MM-DD}` | Count of successful anonymous visitor mints that day (UTC) |
+| `invite:{token}` | JSON `{"status":"active|…","client":"…","created_at":"…"}`; **`SET` with `EX`** — TTL from **`INVITE_TTL_SECONDS`** (default **604800** = 7 days), applied by `scripts/generate_invite.py` |
+| `quota:{auth_session_uuid}` | Remaining API units; `DECR` per protected request; TTL aligned with JWT lifetime |
+| `rl:{client_ip}:{unix_minute}` | Fixed **1-minute** IP window; compare to `RATE_LIMIT_PER_MIN` |
+
+### Middleware behavior
+
+- **Public** (no JWT/quota): `/`, `/health`, `POST /api/auth/anonymous`, `GET /api/auth/me`, `/docs`, `/openapi.json`, `/redoc`.
+- **`OPTIONS`:** Passed through immediately so CORS preflight is not blocked.
+- **All `/api/*`:** Subject to **IP** fixed-window limiting (returns **429** with `detail: rate_limit`).
+- **Protected `/api/*`:** Requires valid `session_token`; then **quota `DECR`** — if exhausted, **403** (`quota_exceeded`). **401** if cookie missing or JWT invalid.
+- **Client IP:** If `CLIENT_IP_TRUST_PROXY=true`, the first hop of `X-Forwarded-For` is used (only behind a **trusted** edge proxy).
+
+### Invite generation (CLI)
+
+From repo root, with `REDIS_URL` set (and optional `PUBLIC_APP_ORIGIN` for the printed link). TTL is **`INVITE_TTL_SECONDS`** (default **604800** = 7 days), or override per run by exporting that variable before invoking the script.
+
+```bash
+python scripts/generate_invite.py --client "Aikido"
+```
+
+### V1 limitation (authorization vs cost)
+
+JWT + quota **limits token/API spend**; it does **not** prove ownership of a Postgres `user_id` or `ChatSession`. Tightening would require embedding or binding `user_id` in the JWT and validating session routes against it.
 
 ---
 

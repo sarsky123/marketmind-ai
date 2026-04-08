@@ -61,13 +61,14 @@ flowchart LR
 - **SSE contract** with `status`, `token`, terminal `done` / `error` (normative shapes in TECH_SPEC files).
 - **Graceful cancellation:** client **AbortController**; server **`asyncio.CancelledError`** handling on the stream.
 - **Orchestrator-only** history window (`max_context_messages`) when building context from the DB.
+- **Anonymous JWT** (HttpOnly cookie), **invite-only uplift**, **daily visitor cap**, **Redis per-session API quotas**, and **IP rate limits** on protected routes; normative detail in [backend/TECH_SPEC.md](backend/TECH_SPEC.md). Invite links: `python scripts/generate_invite.py --client "Name"` (requires `REDIS_URL` and optional `PUBLIC_APP_ORIGIN`).
 
 ### Out of scope or deferred (V1)
 
 - **Document compaction / long-thread summarization** pipelines (optional later).
 - **Pre/post tool hooks**, **MCP**, **multi-provider** LLM abstraction.
 - **Persisting** finance expert internal mini-thread rows by default (optional debug flag later).
-- **Rate limiting / idempotency** on `POST /api/chat/stream` (recommended in DEVELOPMENT_SPEC §4.B; can follow in a later milestone).
+- **Idempotency** / duplicate-send dedupe on `POST /api/chat/stream` (optional; see DEVELOPMENT_SPEC §4.B).
 - Full **mock-LLM CI matrix**; prefer **targeted** tests with mocked HTTP.
 
 ---
@@ -82,12 +83,14 @@ flowchart LR
    cp backend/.env.example backend/.env
    ```
 
-2. Ensure `backend/.env` contains valid connection strings:
+2. Ensure `backend/.env` contains valid connection strings and auth settings:
 
    - `DATABASE_URL` (PostgreSQL; local Docker or Neon)
    - `REDIS_URL` (Redis; local or Upstash)
+   - `AUTH_JWT_SECRET` (required; sign anonymous session JWTs)
+   - Optional cost-control knobs: `MAX_DAILY_VISITORS`, `VISITOR_QUOTA`, `INVITE_QUOTA`, `INVITE_TTL_SECONDS` (invite key TTL in Redis, default one week), `RATE_LIMIT_PER_MIN` (see `.env.example`)
 
-See [backend/TECH_SPEC.md](backend/TECH_SPEC.md) for API keys used by the AI engine (`OPENAI_API_KEY`, `TAVILY_API_KEY`, etc.).
+See [backend/TECH_SPEC.md](backend/TECH_SPEC.md) for API keys used by the AI engine (`OPENAI_API_KEY`, `TAVILY_API_KEY`, etc.) and the full anonymous-auth flow.
 
 ### 2. Start the local hybrid stack (Docker)
 
