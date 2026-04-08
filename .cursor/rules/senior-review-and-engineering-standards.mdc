@@ -13,10 +13,10 @@ Evaluate all work against these criteria:
 
 - **UX:** Fluid interactions; **rich execution feedback** during agent steps; clear loading and error recovery; **Stop Generating** / stream abort must work end-to-end.
 - **UI comfort:** Clean, modern, accessible interface; **multi-tab** and persisted chat state where specified.
-- **Architecture:** Strict frontend/backend decoupling; **hybrid deployment** (Docker local vs serverless cloud) via **`.env`** only; **Postgres = source of truth** for sessions and chat (**never** put message history in Redis); **Redis = ephemeral** cache, rate limits, dedupe — see **DEVELOPMENT_SPEC.md §4**.
+- **Architecture:** Strict frontend/backend decoupling; **hybrid deployment** (Docker local vs serverless cloud) via **`.env`** only; **Postgres = source of truth** for sessions and chat (**never** put message history in Redis); **Redis = ephemeral** cache, rate limits, dedupe — see **SPEC.md §4**.
 - **Code quality:** Strict typing, modularity, SOLID-oriented structure; business logic in hooks/services, not in dumb UI.
 - **Git:** Semantic, **atomic** commits; **Conventional Commits** required (`feat:`, `fix:`, `refactor:`, `docs:`, etc.).
-- **Documentation:** **README.md** must include the three mandatory sections (see **DEVELOPMENT_SPEC.md** §11) and cover Postgres/Redis split, schema, and env (`DATABASE_URL`, `REDIS_URL`) — stay aligned with **DEVELOPMENT_SPEC.md**.
+- **Documentation:** **README.md** must include the three mandatory sections (see **SPEC.md** §11) and cover Postgres/Redis split, schema, and env (`DATABASE_URL`, `REDIS_URL`) — stay aligned with **SPEC.md**.
 - **Core product:** Routing accuracy, search/finance retrieval quality, and **correct inline citations** grounded in tool output.
 
 **Behavior:** Aggressively call out gaps; do not accept subpar implementations.

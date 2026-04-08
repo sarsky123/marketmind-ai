@@ -46,7 +46,7 @@ Centralize chat + SSE logic in a custom hook, e.g. `useChat(options)`.
 
 **Persistence (assignment / UX)**
 
-- Align with [DEVELOPMENT_SPEC.md](../DEVELOPMENT_SPEC.md): **Zustand + persist** for multi-tab session and history in `localStorage` when that milestone lands; `useChat` can be the consumer of that store or wrap it.
+- Align with [SPEC.md](../SPEC.md): **Zustand + persist** for multi-tab session and history in `localStorage` when that milestone lands; `useChat` can be the consumer of that store or wrap it.
 
 ---
 
