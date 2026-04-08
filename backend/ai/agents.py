@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import uuid
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from typing import Any
 
 from openai import AsyncOpenAI
@@ -36,8 +37,105 @@ from ai.types import (
 from models import ChatMessage
 
 _TOOL_CALLS_LIST_ADAPTER = TypeAdapter(list[ChatCompletionMessageToolCallUnionParam])
-_CHAT_MESSAGE_ADAPTER = TypeAdapter(ChatCompletionMessageParam)
 _CHAT_MESSAGES_LIST_ADAPTER = TypeAdapter(list[ChatCompletionMessageParam])
+
+
+@dataclass
+class _HistoryRow:
+    role: str
+    content: str | None
+    tool_calls: list[ChatCompletionMessageToolCallUnionParam] | None = None
+    tool_call_id: str | None = None
+
+
+class _IncrementalChatHistory:
+    """Maintains bounded chat rows and lazily builds OpenAI-compatible messages."""
+
+    def __init__(self, *, system_prompt: str, max_messages: int | None) -> None:
+        self._system_prompt = system_prompt
+        self._max_messages = max_messages
+        self._rows: list[_HistoryRow] = []
+        self._tool_response_ids: set[str] = set()
+        self._cache: list[ChatCompletionMessageParam] | None = None
+
+    def hydrate(self, rows: list[ChatMessage]) -> None:
+        for row in rows:
+            self.append_row(
+                role=row.role,
+                content=row.content,
+                tool_calls=row.tool_calls if _is_openai_tool_calls_param_list(row.tool_calls) else None,
+                tool_call_id=row.tool_call_id,
+            )
+
+    def append_row(
+        self,
+        *,
+        role: str,
+        content: str | None,
+        tool_calls: list[ChatCompletionMessageToolCallUnionParam] | None = None,
+        tool_call_id: str | None = None,
+    ) -> None:
+        self._rows.append(
+            _HistoryRow(
+                role=role,
+                content=content,
+                tool_calls=tool_calls,
+                tool_call_id=tool_call_id,
+            )
+        )
+        if role == "tool" and isinstance(tool_call_id, str) and tool_call_id:
+            self._tool_response_ids.add(tool_call_id)
+        self._trim_window_if_needed()
+        self._cache = None
+
+    def build_messages(self) -> list[ChatCompletionMessageParam]:
+        if self._cache is not None:
+            return self._cache
+
+        msgs: list[dict[str, Any]] = [{"role": "system", "content": self._system_prompt}]
+        for row in self._rows:
+            if row.role == "tool":
+                msgs.append(
+                    {
+                        "role": "tool",
+                        "content": row.content or "",
+                        "tool_call_id": row.tool_call_id or "",
+                    }
+                )
+                continue
+            if row.role == "assistant" and row.tool_calls:
+                assistant_call_ids = [
+                    str(tc.get("id"))
+                    for tc in row.tool_calls
+                    if isinstance(tc, dict) and isinstance(tc.get("id"), str) and tc.get("id")
+                ]
+                missing_ids = [
+                    tcid for tcid in assistant_call_ids if tcid not in self._tool_response_ids
+                ]
+                if missing_ids:
+                    # Corrupted history guard: send this as a plain assistant text turn.
+                    msgs.append({"role": "assistant", "content": row.content or ""})
+                    continue
+                msgs.append(
+                    {
+                        "role": "assistant",
+                        "content": row.content,
+                        "tool_calls": row.tool_calls,
+                    }
+                )
+                continue
+            msgs.append({"role": row.role, "content": row.content or ""})
+
+        self._cache = _CHAT_MESSAGES_LIST_ADAPTER.validate_python(msgs)
+        return self._cache
+
+    def _trim_window_if_needed(self) -> None:
+        if self._max_messages is None:
+            return
+        while len(self._rows) > self._max_messages:
+            dropped = self._rows.pop(0)
+            if dropped.role == "tool" and isinstance(dropped.tool_call_id, str) and dropped.tool_call_id:
+                self._tool_response_ids.discard(dropped.tool_call_id)
 
 
 def _usage_add(usage: UsageTotals, completion: Any) -> None:
@@ -122,30 +220,9 @@ def format_history_for_openai(
     system_prompt: str,
     max_messages: int | None,
 ) -> list[ChatCompletionMessageParam]:
-    msgs: list[dict[str, Any]] = [{"role": "system", "content": system_prompt}]
-    slice_rows = rows
-    if max_messages is not None and len(rows) > max_messages:
-        slice_rows = rows[-max_messages:]
-    for m in slice_rows:
-        if m.role == "tool":
-            msgs.append(
-                {
-                    "role": "tool",
-                    "content": m.content or "",
-                    "tool_call_id": m.tool_call_id or "",
-                }
-            )
-        elif m.role == "assistant" and _is_openai_tool_calls_param_list(m.tool_calls):
-            msgs.append(
-                {
-                    "role": "assistant",
-                    "content": m.content,
-                    "tool_calls": m.tool_calls,
-                }
-            )
-        else:
-            msgs.append({"role": m.role, "content": m.content or ""})
-    return _CHAT_MESSAGES_LIST_ADAPTER.validate_python(msgs)
+    history = _IncrementalChatHistory(system_prompt=system_prompt, max_messages=max_messages)
+    history.hydrate(rows)
+    return history.build_messages()
 
 
 async def run_finance_expert(
@@ -158,12 +235,11 @@ async def run_finance_expert(
     trace: EngineTrace,
 ) -> AsyncIterator[dict[str, Any]]:
     """Tight isolation: [system, user task] only; inner tool loop; no DB history."""
-    messages: list[ChatCompletionMessageParam] = _CHAT_MESSAGES_LIST_ADAPTER.validate_python(
-        [
-            {"role": "system", "content": get_finance_expert_system_prompt()},
-            {"role": "user", "content": specific_task},
-        ]
+    history = _IncrementalChatHistory(
+        system_prompt=get_finance_expert_system_prompt(),
+        max_messages=None,
     )
+    history.append_row(role="user", content=specific_task)
     tools = get_openai_tools_for_finance_expert(perm)
     usage = UsageTotals()
     citations: list[Citation] = []
@@ -185,9 +261,11 @@ async def run_finance_expert(
             tool_display="Finance Analysis",
             agent="finance_expert",
         )
+        round_messages = history.build_messages()
+        trace.add("finance_context_messages", str(len(round_messages)))
         completion = await client.chat.completions.create(
             model=ctx.finance_model,
-            messages=messages,
+            messages=round_messages,
             tools=tools,
             tool_choice="auto",
         )
@@ -195,14 +273,10 @@ async def run_finance_expert(
         _usage_add(usage, completion)
         if choice.tool_calls:
             stored = _tool_calls_to_stored(choice)
-            messages.append(
-                _CHAT_MESSAGE_ADAPTER.validate_python(
-                    {
-                        "role": "assistant",
-                        "content": choice.content,
-                        "tool_calls": stored,
-                    }
-                )
+            history.append_row(
+                role="assistant",
+                content=choice.content,
+                tool_calls=stored,
             )
             for tc in choice.tool_calls:
                 name = tc.function.name
@@ -235,14 +309,10 @@ async def run_finance_expert(
                         agent="finance_expert",
                     )
                 content = tr.message if tr.ok else f"Tool error: {tr.message}"
-                messages.append(
-                    _CHAT_MESSAGE_ADAPTER.validate_python(
-                        {
-                            "role": "tool",
-                            "tool_call_id": tc.id,
-                            "content": content,
-                        }
-                    )
+                history.append_row(
+                    role="tool",
+                    tool_call_id=tc.id,
+                    content=content,
                 )
             continue
         yield {
@@ -289,8 +359,15 @@ async def run_orchestrator(
     yield _status_event(message="Loading conversation...", stage="load_history")
     rows = await repo.list_messages(session_id)
     is_first_user_turn = len(rows) == 0
+    history = _IncrementalChatHistory(
+        system_prompt=get_orchestrator_system_prompt(),
+        max_messages=config.max_context_messages,
+    )
+    history.hydrate(rows)
     await repo.add_message(session_id, "user", user_message)
+    await repo.touch_session(session_id)
     await db_session.commit()
+    history.append_row(role="user", content=user_message)
 
     yield _status_event(message="Thinking...", stage="thinking")
 
@@ -300,12 +377,8 @@ async def run_orchestrator(
 
     while iteration < config.max_orchestrator_rounds:
         iteration += 1
-        rows = await repo.list_messages(session_id)
-        oai_messages = format_history_for_openai(
-            rows,
-            get_orchestrator_system_prompt(),
-            config.max_context_messages,
-        )
+        oai_messages = history.build_messages()
+        trace.add("orchestrator_context_messages", str(len(oai_messages)))
 
         force_title_round = pending_forced_title
         round_tools = [
@@ -322,7 +395,6 @@ async def run_orchestrator(
                 "type": "function",
                 "function": {"name": str(ToolName.SET_SESSION_TITLE)},
             }
-
         completion = await client.chat.completions.create(
             model=ctx.orchestrator_model,
             messages=oai_messages,
@@ -342,14 +414,16 @@ async def run_orchestrator(
                 yield {"kind": "session_title", "title": safe_title}
 
         if msg.tool_calls:
+            stored_calls = _tool_calls_to_stored(msg)
             await repo.add_message(
                 session_id,
                 "assistant",
                 msg.content,
-                tool_calls=_tool_calls_to_stored(msg),
+                tool_calls=stored_calls,
                 tool_call_id=None,
             )
             await db_session.commit()
+            history.append_row(role="assistant", content=msg.content, tool_calls=stored_calls)
 
             for tc in msg.tool_calls:
                 name_str = tc.function.name
@@ -460,6 +534,11 @@ async def run_orchestrator(
                     tool_call_id=tc.id,
                 )
                 await db_session.commit()
+                history.append_row(
+                    role="tool",
+                    content=tool_content,
+                    tool_call_id=tc.id,
+                )
             if force_title_round:
                 pending_forced_title = False
             continue
