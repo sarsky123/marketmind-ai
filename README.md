@@ -168,6 +168,23 @@ make db-migrate MSG="add_new_tables"
 
 ---
 
+## CI/CD (GitHub -> EC2 Docker rebuild)
+
+Pushes to `main` trigger `.github/workflows/deploy-ec2.yml`, which SSHes into EC2, pulls latest code, and runs:
+
+```bash
+docker compose down
+docker compose up -d --build
+```
+
+Configure these GitHub Actions repository secrets:
+
+- `EC2_HOST` - EC2 public IP or DNS
+- `EC2_USER` - SSH user (typically `ubuntu`)
+- `EC2_SSH_KEY` - private key content for SSH (matching your EC2 key pair)
+
+---
+
 ## Engineering standards
 
 See [.cursor/rules/senior-review-and-engineering-standards.mdc](.cursor/rules/senior-review-and-engineering-standards.mdc) and [DEVELOPMENT_SPEC.md](DEVELOPMENT_SPEC.md) for review expectations, testing ideas, and assignment checklist.

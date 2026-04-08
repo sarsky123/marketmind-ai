@@ -10,10 +10,14 @@ variable "instance_type" {
   default     = "t3.micro"
 }
 
-variable "public_key_path" {
-  description = "Path to the SSH public key used for the EC2 key pair."
+variable "public_key_content" {
+  description = "SSH public key content used for the EC2 key pair."
   type        = string
-  default     = "~/.ssh/id_ed25519.pub"
+}
+
+variable "ssh_allowed_cidrs" {
+  description = "CIDR blocks allowed to SSH into the EC2 instance."
+  type        = list(string)
 }
 
 variable "domain_name" {

@@ -13,7 +13,7 @@ provider "aws" {
 
 resource "aws_key_pair" "deployer" {
   key_name   = "marketmind-ai-key"
-  public_key = file(var.public_key_path)
+  public_key = var.public_key_content
 }
 
 resource "aws_security_group" "app_sg" {
@@ -25,7 +25,7 @@ resource "aws_security_group" "app_sg" {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = var.ssh_allowed_cidrs
   }
 
   ingress {
