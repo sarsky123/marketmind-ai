@@ -20,21 +20,21 @@ from yfinance.scrapers.quote import FastInfo
 class TavilySearchResult(TypedDict, total=False):
     """One item under ``results`` in a Tavily Search response."""
 
-    title: str
-    url: str
-    content: str
-    raw_content: str
-    score: float
-    published_date: str
+    title: str | None
+    url: str | None
+    content: str | None
+    raw_content: str | None
+    score: float | None
+    published_date: str | None
 
 
 class TavilySearchResponse(TypedDict, total=False):
     """Tavily Search API JSON (``TavilyClient.search`` return shape)."""
 
     query: str
-    answer: str
+    answer: str | None
     results: list[TavilySearchResult]
-    response_time: float
+    response_time: float | None
 
 
 _TAVILY_SEARCH_ADAPTER = TypeAdapter(TavilySearchResponse)
