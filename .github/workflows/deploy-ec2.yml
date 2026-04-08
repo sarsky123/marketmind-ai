@@ -26,8 +26,6 @@ jobs:
           script_stop: true
           script: |
             set -euxo pipefail
-
-            # Ensure Terraform user_data/cloud-init bootstrap is fully finished.
             sudo cloud-init status --wait
 
             APP_DIR="/opt/marketmind-ai"
