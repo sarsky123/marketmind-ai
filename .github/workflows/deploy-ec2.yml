@@ -55,6 +55,8 @@ jobs:
                 echo "OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}"
                 echo "TAVILY_API_KEY=${{ secrets.TAVILY_API_KEY }}"
                 echo "AUTH_JWT_SECRET=${{ secrets.AUTH_JWT_SECRET }}"
+                echo "APP_DOMAIN=${{ secrets.APP_DOMAIN }}"
+                echo "ACME_EMAIL=${{ secrets.ACME_EMAIL }}"
               } > .env
             fi
             chmod 600 .env

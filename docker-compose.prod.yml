@@ -29,5 +29,23 @@ services:
   frontend:
     build:
       target: prod
+
+  caddy:
+    image: caddy:2-alpine
+    depends_on:
+      - frontend
+      - backend
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:?missing}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+    volumes:
+      - ./infra/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
     ports:
       - "80:80"
+      - "443:443"
+
+volumes:
+  caddy-data:
+  caddy-config:

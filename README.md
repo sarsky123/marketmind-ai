@@ -214,12 +214,15 @@ Required GitHub repository secrets:
 - `EC2_USER` (typically `ubuntu`)
 - `EC2_SSH_KEY` (private key matching Terraform public key)
 - `APP_ENV_B64` (base64-encoded full root `.env`, recommended)
+- `APP_DOMAIN` (for example `marketmind-ai.chungyulo.xyz`)
+- `ACME_EMAIL` (Let's Encrypt contact email)
 
 Fallback per-key secrets if `APP_ENV_B64` is not set:
 
 - `DB_USER`, `DB_PASSWORD`, `DB_NAME`
 - `DATABASE_URL`, `REDIS_URL`
 - `OPENAI_API_KEY`, `TAVILY_API_KEY`, `AUTH_JWT_SECRET`
+- `APP_DOMAIN`, `ACME_EMAIL`
 
 ## Operations and Troubleshooting
 
