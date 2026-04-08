@@ -28,8 +28,10 @@ from ai.types import (
     EngineConfig,
     ToolName,
     ToolRunResult,
+    ToolWebRef,
     UsageTotals,
     parse_tool_name,
+    parse_tool_web_refs,
 )
 from models import ChatMessage
 
@@ -73,19 +75,11 @@ def _is_openai_tool_calls_param_list(raw: object) -> bool:
     return True
 
 
-def _merge_citation_refs(citations: list[Citation], refs_value: object) -> None:
-    if not isinstance(refs_value, list):
-        return
+def _merge_citation_refs(citations: list[Citation], refs: list[ToolWebRef]) -> None:
     existing_urls = {c["url"] for c in citations}
-    for raw_ref in refs_value:
-        if not isinstance(raw_ref, dict):
-            continue
-        title = raw_ref.get("title")
-        url = raw_ref.get("url")
-        if not isinstance(title, str) or not isinstance(url, str):
-            continue
-        title = title.strip()
-        url = url.strip()
+    for ref in refs:
+        title = ref["title"].strip()
+        url = ref["url"].strip()
         if not title or not url or url in existing_urls:
             continue
         citations.append({"index": len(citations) + 1, "title": title, "url": url})
@@ -223,7 +217,7 @@ async def run_finance_expert(
                     agent="finance_expert",
                 )
                 tr = await dispatch_registry_tool(name, args, ctx)
-                _merge_citation_refs(citations, tr.meta.get("refs"))
+                _merge_citation_refs(citations, parse_tool_web_refs(tr.meta.get("refs")))
                 if tr.ok:
                     yield _status_event(
                         message=f"{tool_display} complete.",
@@ -416,15 +410,13 @@ async def run_orchestrator(
                             )
                         else:
                             usage_total.total_tokens += fin_usage_tokens
+                            finance_refs: list[ToolWebRef] = [
+                                {"title": c["title"], "url": c["url"]} for c in fin_citations
+                            ]
                             tr = ToolRunResult(
                                 ok=True,
                                 message=summary,
-                                meta={
-                                    "refs": [
-                                        {"title": c["title"], "url": c["url"]}
-                                        for c in fin_citations
-                                    ]
-                                },
+                                meta={"refs": finance_refs},
                             )
                 elif tool_enum is ToolName.SET_SESSION_TITLE:
                     try:
@@ -458,7 +450,7 @@ async def run_orchestrator(
                 else:
                     tr = await dispatch_registry_tool(name_str, args, ctx)
 
-                _merge_citation_refs(citations, tr.meta.get("refs"))
+                _merge_citation_refs(citations, parse_tool_web_refs(tr.meta.get("refs")))
                 tool_content = tr.message if tr.ok else f"Error: {tr.message}"
                 await repo.add_message(
                     session_id,

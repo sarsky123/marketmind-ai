@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Literal
 
+from pydantic import TypeAdapter, ValidationError
 from typing_extensions import TypedDict
 
 
@@ -35,6 +36,26 @@ class Citation(TypedDict):
     url: str
 
 
+class ToolWebRef(TypedDict):
+    """Source link from search/tools before ``index`` is assigned for ``Citation``."""
+
+    title: str
+    url: str
+
+
+_TOOL_WEB_REFS_ADAPTER = TypeAdapter(list[ToolWebRef])
+
+
+def parse_tool_web_refs(raw: object) -> list[ToolWebRef]:
+    """Coerce tool ``meta['refs']`` (or similar) into validated ``ToolWebRef`` rows."""
+    if not isinstance(raw, list) or not raw:
+        return []
+    try:
+        return _TOOL_WEB_REFS_ADAPTER.validate_python(raw)
+    except ValidationError:
+        return []
+
+
 def parse_stored_citations(raw: object) -> list[Citation] | None:
     """Parse citation blobs from ``ChatMessage.tool_calls`` JSON (final assistant turn)."""
     if not isinstance(raw, list) or not raw:
@@ -60,8 +81,8 @@ class ToolRunResult:
 
 @dataclass
 class EngineConfig:
-    max_orchestrator_rounds: int = 5
-    max_finance_rounds: int = 3
+    max_orchestrator_rounds: int = 20
+    max_finance_rounds: int = 15
     max_context_messages: int | None = 60
 
 
