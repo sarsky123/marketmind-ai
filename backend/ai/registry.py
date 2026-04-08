@@ -51,7 +51,10 @@ _ALL_OPENAI_TOOL_SCHEMAS: list[ChatCompletionToolParam] = TypeAdapter(
         "type": "function",
         "function": {
             "name": ToolName.CLARIFY_INTENT,
-            "description": "Ask the user a concise clarifying question.",
+            "description": (
+                "Ask the user ONE concise clarifying question, only if the request is truly underspecified "
+                "and you cannot proceed with a safe, reasonable assumption."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
