@@ -21,7 +21,7 @@ from ai.agents import map_engine_event_to_sse, run_orchestrator
 from ai.context import build_runtime_context
 from ai.permissions import ToolPermissionContext
 from ai.repository import ChatRepository
-from ai.types import EngineConfig
+from ai.types import Citation, EngineConfig, parse_stored_citations
 from db import get_db_session, get_engine, get_redis_client
 
 app = FastAPI(title="AI Financial Assistant API")
@@ -43,6 +43,20 @@ class CreateSessionRequest(BaseModel):
 class CreateSessionResponse(BaseModel):
     session_id: uuid.UUID
     user_id: uuid.UUID
+
+
+class SessionSummaryResponse(BaseModel):
+    session_id: uuid.UUID
+    title: str | None = None
+    created_at: str
+
+
+class ChatMessageResponse(BaseModel):
+    id: uuid.UUID
+    role: str
+    content: str | None = None
+    created_at: str
+    citations: list[Citation] | None = None
 
 
 class ChatStreamRequest(BaseModel):
@@ -115,6 +129,45 @@ async def create_session(
     sess = await repo.create_session(uid, body.title)
     await db_session.commit()
     return CreateSessionResponse(session_id=sess.id, user_id=uid)
+
+
+@app.get("/api/sessions", response_model=list[SessionSummaryResponse])
+async def list_sessions(
+    user_id: uuid.UUID,
+    db_session: AsyncSession = Depends(get_db_session),
+) -> list[SessionSummaryResponse]:
+    repo = ChatRepository(db_session)
+    sessions = await repo.list_sessions(user_id)
+    return [
+        SessionSummaryResponse(
+            session_id=s.id,
+            title=s.title,
+            created_at=s.created_at.isoformat(),
+        )
+        for s in sessions
+    ]
+
+
+@app.get("/api/sessions/{session_id}/messages", response_model=list[ChatMessageResponse])
+async def list_session_messages(
+    session_id: uuid.UUID,
+    db_session: AsyncSession = Depends(get_db_session),
+) -> list[ChatMessageResponse]:
+    repo = ChatRepository(db_session)
+    sess = await repo.get_session(session_id)
+    if sess is None:
+        return []
+    messages = await repo.list_messages(session_id)
+    return [
+        ChatMessageResponse(
+            id=m.id,
+            role=m.role,
+            content=m.content,
+            created_at=m.created_at.isoformat(),
+            citations=parse_stored_citations(m.tool_calls),
+        )
+        for m in messages
+    ]
 
 
 @app.post("/api/chat/stream")
