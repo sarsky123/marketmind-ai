@@ -17,6 +17,9 @@ export function ChatLayout() {
     error,
     authPhase,
     authError,
+    authRole,
+    quotaRemaining,
+    quotaDaily,
     usage,
     sendMessage,
     stop,
@@ -26,8 +29,17 @@ export function ChatLayout() {
   } = useChat();
   const authReady = authPhase === "ready";
   const bannerText = authError ?? error;
+  const quotaLine = useMemo(() => {
+    if (!authReady) return null;
+    const roleLabel = authRole === "invited" ? "Invited" : "Visitor";
+    if (quotaRemaining == null || quotaDaily == null) {
+      return `${roleLabel}`;
+    }
+    return `${roleLabel} • ${quotaRemaining} / ${quotaDaily} left today`;
+  }, [authReady, authRole, quotaRemaining, quotaDaily]);
   const [theme, setTheme] = useState<ThemeMode>("light");
   const [menuOpenSessionId, setMenuOpenSessionId] = useState<string | null>(null);
+  const [recentChatsExpanded, setRecentChatsExpanded] = useState(false);
 
   const isStreaming = phase === "streaming";
   const activeTitle = useMemo(() => {
@@ -110,8 +122,23 @@ export function ChatLayout() {
           </button>
         </div>
 
-        <div className="chat-sidebar__section">Recent chats</div>
-        <ul className="chat-sidebar__list" aria-label="Recent chats">
+        <div className="chat-sidebar__section-row">
+          <div className="chat-sidebar__section">Recent chats</div>
+          <button
+            type="button"
+            className="chat-sidebar__section-toggle"
+            aria-expanded={recentChatsExpanded}
+            aria-controls="recent-chats-list"
+            onClick={() => setRecentChatsExpanded((prev) => !prev)}
+          >
+            {recentChatsExpanded ? "Hide" : "Show"}
+          </button>
+        </div>
+        <ul
+          id="recent-chats-list"
+          className={`chat-sidebar__list ${recentChatsExpanded ? "chat-sidebar__list--expanded" : "chat-sidebar__list--collapsed"}`}
+          aria-label="Recent chats"
+        >
           {sessions.map((session) => {
             const isMenuOpen = menuOpenSessionId === session.session_id;
             const menuId = `session-menu-${session.session_id}`;
@@ -210,6 +237,12 @@ export function ChatLayout() {
         {authPhase === "checking" ? (
           <div className="chat-auth-banner" role="status" aria-live="polite">
             Signing you in…
+          </div>
+        ) : null}
+
+        {quotaLine ? (
+          <div className="chat-quota-banner" role="status" aria-live="polite">
+            {quotaLine}
           </div>
         ) : null}
 

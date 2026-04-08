@@ -32,10 +32,14 @@ interface UseChatReturn {
   error: string | null;
   authPhase: AuthBootstrapPhase;
   authError: string | null;
+  authRole: string | null;
+  quotaRemaining: number | null;
+  quotaDaily: number | null;
   usage: DonePayload["usage"] | null;
   sendMessage: (text: string) => Promise<void>;
   stop: () => void;
-  createSession: () => Promise<void>;
+  /** Open a blank draft (no server session until first prompt). */
+  createSession: () => void;
   switchSession: (sessionId: string) => Promise<void>;
   deleteSession: (sessionId: string) => Promise<boolean>;
 }
@@ -51,8 +55,38 @@ export function useChat(): UseChatReturn {
   const [error, setError] = useState<string | null>(null);
   const [authPhase, setAuthPhase] = useState<AuthBootstrapPhase>("checking");
   const [authError, setAuthError] = useState<string | null>(null);
+  const [authRole, setAuthRole] = useState<string | null>(null);
+  const [quotaRemaining, setQuotaRemaining] = useState<number | null>(null);
+  const [quotaDaily, setQuotaDaily] = useState<number | null>(null);
   const [usage, setUsage] = useState<DonePayload["usage"] | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const messagesCacheRef = useRef<Map<string, ChatMessage[]>>(new Map());
+
+  const stop = useCallback(() => {
+    abortRef.current?.abort();
+  }, []);
+
+  const refreshAuthMe = useCallback(async () => {
+    try {
+      const res = await fetchApi("/api/auth/me");
+      if (!res.ok) {
+        setAuthRole(null);
+        setQuotaRemaining(null);
+        setQuotaDaily(null);
+        return;
+      }
+      const data = (await res.json()) as {
+        role?: unknown;
+        quota_remaining?: unknown;
+        quota?: unknown;
+      };
+      setAuthRole(typeof data.role === "string" ? data.role : null);
+      setQuotaRemaining(typeof data.quota_remaining === "number" ? data.quota_remaining : null);
+      setQuotaDaily(typeof data.quota === "number" ? data.quota : null);
+    } catch {
+      // Best-effort: leave existing values if /me is temporarily unavailable.
+    }
+  }, []);
 
   const mapServerMessage = useCallback((message: ServerChatMessage): ChatMessage | null => {
     if (message.role !== "user" && message.role !== "assistant") {
@@ -82,6 +116,16 @@ export function useChat(): UseChatReturn {
   }, []);
 
   const switchSession = useCallback(async (sessionId: string) => {
+    const cached = messagesCacheRef.current.get(sessionId);
+    if (cached) {
+      setActiveSessionId(sessionId);
+      setMessages(cached);
+      setStreamingContent("");
+      setStatusSteps([]);
+      setUsage(null);
+      setError(null);
+      return;
+    }
     const res = await fetchApi(`/api/sessions/${encodeURIComponent(sessionId)}/messages`);
     if (!res.ok) {
       throw new Error(`Load messages failed: ${res.status}`);
@@ -92,39 +136,23 @@ export function useChat(): UseChatReturn {
       .filter((message): message is ChatMessage => message !== null);
     setActiveSessionId(sessionId);
     setMessages(hydrated);
+    messagesCacheRef.current.set(sessionId, hydrated);
     setStreamingContent("");
     setStatusSteps([]);
     setUsage(null);
     setError(null);
   }, [mapServerMessage]);
 
-  const createSession = useCallback(async () => {
-    try {
-      const res = await fetchApi("/api/sessions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: "New chat", user_id: userId }),
-      });
-      if (!res.ok) throw new Error(`Session create failed: ${res.status}`);
-      const data: { session_id: string } = await res.json();
-      const nextUserId = (data as { user_id?: string }).user_id ?? userId;
-      if (nextUserId) {
-        setUserId(nextUserId);
-        localStorage.setItem("aift_user_id", nextUserId);
-      }
-      setActiveSessionId(data.session_id);
-      setMessages([]);
-      setStreamingContent("");
-      setStatusSteps([]);
-      setUsage(null);
-      setError(null);
-      if (nextUserId) {
-        await loadSessions(nextUserId);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create session");
-    }
-  }, [userId, loadSessions]);
+  /** Open a blank draft: no `POST /api/sessions` until the user sends a message. */
+  const createSession = useCallback(() => {
+    stop();
+    setActiveSessionId(null);
+    setMessages([]);
+    setStreamingContent("");
+    setStatusSteps([]);
+    setUsage(null);
+    setError(null);
+  }, [stop]);
 
   useEffect(() => {
     let cancelled = false;
@@ -136,6 +164,7 @@ export function useChat(): UseChatReturn {
       }
       if (me.ok) {
         setAuthPhase("ready");
+        await refreshAuthMe();
         return;
       }
       const params = new URLSearchParams(window.location.search);
@@ -169,12 +198,13 @@ export function useChat(): UseChatReturn {
       const nextUrl = `${window.location.pathname}${search ? `?${search}` : ""}${window.location.hash}`;
       window.history.replaceState({}, "", nextUrl);
       setAuthPhase("ready");
+      await refreshAuthMe();
     };
     void bootstrapAuth();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [refreshAuthMe]);
 
   useEffect(() => {
     if (authPhase !== "ready") {
@@ -191,17 +221,15 @@ export function useChat(): UseChatReturn {
             return;
           }
         }
-        await createSession();
+        setActiveSessionId(null);
+        setMessages([]);
       } catch {
-        await createSession();
+        setActiveSessionId(null);
+        setMessages([]);
       }
     };
     void init();
-  }, [authPhase, createSession, loadSessions, switchSession]);
-
-  const stop = useCallback(() => {
-    abortRef.current?.abort();
-  }, []);
+  }, [authPhase, loadSessions, switchSession]);
 
   const deleteSession = useCallback(
     async (sessionId: string): Promise<boolean> => {
@@ -224,6 +252,7 @@ export function useChat(): UseChatReturn {
         }
         const remaining = sessions.filter((s) => s.session_id !== sessionId);
         setSessions(remaining);
+        messagesCacheRef.current.delete(sessionId);
         if (wasActive) {
           setMessages([]);
           setStreamingContent("");
@@ -233,7 +262,8 @@ export function useChat(): UseChatReturn {
           if (remaining.length > 0) {
             await switchSession(remaining[0].session_id);
           } else {
-            await createSession();
+            setActiveSessionId(null);
+            setMessages([]);
           }
         }
         return true;
@@ -242,15 +272,58 @@ export function useChat(): UseChatReturn {
         return false;
       }
     },
-    [userId, activeSessionId, stop, sessions, switchSession, createSession],
+    [userId, activeSessionId, stop, sessions, switchSession],
   );
 
   const sendMessage = useCallback(
     async (text: string) => {
-      if (!activeSessionId || phase === "streaming") return;
+      if (phase === "streaming") return;
 
       const userMsg: ChatMessage = { id: nextId(), role: "user", content: text };
-      setMessages((prev) => [...prev, userMsg]);
+      let streamSid = activeSessionId;
+
+      setMessages((prev) => {
+        const next = [...prev, userMsg];
+        if (streamSid) {
+          messagesCacheRef.current.set(streamSid, next);
+        }
+        return next;
+      });
+
+      if (!streamSid) {
+        try {
+          const res = await fetchApi("/api/sessions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ title: "New chat", user_id: userId }),
+          });
+          if (!res.ok) {
+            setMessages((prev) => prev.filter((m) => m.id !== userMsg.id));
+            setError(`Session create failed: ${res.status}`);
+            setPhase("idle");
+            return;
+          }
+          const data = (await res.json()) as { session_id: string; user_id?: string };
+          streamSid = data.session_id;
+          const nextUserId = data.user_id ?? userId;
+          if (nextUserId) {
+            setUserId(nextUserId);
+            localStorage.setItem("aift_user_id", nextUserId);
+            await loadSessions(nextUserId);
+          }
+          setActiveSessionId(streamSid);
+          setMessages((prev) => {
+            messagesCacheRef.current.set(streamSid, prev);
+            return prev;
+          });
+        } catch (err) {
+          setMessages((prev) => prev.filter((m) => m.id !== userMsg.id));
+          setError(err instanceof Error ? err.message : "Failed to create session");
+          setPhase("idle");
+          return;
+        }
+      }
+
       setStatusSteps([]);
       setStreamingContent("");
       setError(null);
@@ -266,7 +339,7 @@ export function useChat(): UseChatReturn {
         const res = await fetchApi("/api/chat/stream", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ session_id: activeSessionId, message: text }),
+          body: JSON.stringify({ session_id: streamSid, message: text }),
           signal: controller.signal,
         });
 
@@ -304,7 +377,7 @@ export function useChat(): UseChatReturn {
                 normalizeStatusStep(ev.data),
               ]);
             } else if (ev.event === "session_title") {
-              const sid = activeSessionId;
+              const sid = streamSid;
               const t = ev.data.title.trim();
               if (sid && t) {
                 setSessions((prev) =>
@@ -316,34 +389,46 @@ export function useChat(): UseChatReturn {
               setStreamingContent(accumulated);
             } else if (ev.event === "done") {
               const finalContent = accumulated;
+              const assistantMsg: ChatMessage = {
+                id: nextId(),
+                role: "assistant",
+                content: finalContent,
+                citations: ev.data.citations,
+                animateOnMount: true,
+              };
               setMessages((prev) => [
                 ...prev,
-                {
-                  id: nextId(),
-                  role: "assistant",
-                  content: finalContent,
-                  citations: ev.data.citations,
-                  animateOnMount: true,
-                },
+                assistantMsg,
+              ]);
+              messagesCacheRef.current.set(streamSid, [
+                ...(messagesCacheRef.current.get(streamSid) ?? []),
+                assistantMsg,
               ]);
               setStreamingContent("");
               setUsage(ev.data.usage ?? null);
               setPhase("idle");
+              await refreshAuthMe();
             } else if (ev.event === "error") {
               setError(`${ev.data.message} (${ev.data.code})`);
               if (accumulated) {
+                const partialMsg: ChatMessage = {
+                  id: nextId(),
+                  role: "assistant",
+                  content: accumulated,
+                  animateOnMount: true,
+                };
                 setMessages((prev) => [
                   ...prev,
-                  {
-                    id: nextId(),
-                    role: "assistant",
-                    content: accumulated,
-                    animateOnMount: true,
-                  },
+                  partialMsg,
+                ]);
+                messagesCacheRef.current.set(streamSid, [
+                  ...(messagesCacheRef.current.get(streamSid) ?? []),
+                  partialMsg,
                 ]);
                 setStreamingContent("");
               }
               setPhase("error");
+              await refreshAuthMe();
             }
           }
         }
@@ -351,27 +436,30 @@ export function useChat(): UseChatReturn {
         if (err instanceof DOMException && err.name === "AbortError") {
           setStreamingContent("");
           setStatusSteps([]);
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: nextId(),
-              role: "assistant",
-              content: accumulated,
-              generationStopped: true,
-              animateOnMount: accumulated.length > 0,
-            },
+          const partialMsg: ChatMessage = {
+            id: nextId(),
+            role: "assistant",
+            content: accumulated,
+            generationStopped: true,
+            animateOnMount: accumulated.length > 0,
+          };
+          setMessages((prev) => [...prev, partialMsg]);
+          messagesCacheRef.current.set(streamSid, [
+            ...(messagesCacheRef.current.get(streamSid) ?? []),
+            partialMsg,
           ]);
           setPhase("idle");
           return;
         }
         setError(err instanceof Error ? err.message : "Unknown error");
         setPhase("error");
+        await refreshAuthMe();
       } finally {
         abortRef.current = null;
         setPhase((prev) => (prev === "streaming" ? "idle" : prev));
       }
     },
-    [activeSessionId, phase],
+    [activeSessionId, userId, phase, refreshAuthMe, loadSessions],
   );
 
   return {
@@ -385,6 +473,9 @@ export function useChat(): UseChatReturn {
     error,
     authPhase,
     authError,
+    authRole,
+    quotaRemaining,
+    quotaDaily,
     usage,
     sendMessage,
     stop,
