@@ -57,6 +57,7 @@ class SessionSummaryResponse(BaseModel):
     session_id: uuid.UUID
     title: str | None = None
     created_at: str
+    updated_at: str
 
 
 class ChatMessageResponse(BaseModel):
@@ -151,6 +152,7 @@ async def list_sessions(
             session_id=s.id,
             title=s.title,
             created_at=s.created_at.isoformat(),
+            updated_at=s.updated_at.isoformat(),
         )
         for s in sessions
     ]

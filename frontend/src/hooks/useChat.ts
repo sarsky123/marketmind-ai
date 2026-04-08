@@ -115,6 +115,17 @@ export function useChat(): UseChatReturn {
     return list;
   }, []);
 
+  const refreshSessionOrdering = useCallback(async () => {
+    if (!userId) {
+      return;
+    }
+    try {
+      await loadSessions(userId);
+    } catch {
+      // Keep current list if refresh fails transiently.
+    }
+  }, [userId, loadSessions]);
+
   const switchSession = useCallback(async (sessionId: string) => {
     const cached = messagesCacheRef.current.get(sessionId);
     if (cached) {
@@ -408,6 +419,7 @@ export function useChat(): UseChatReturn {
               setUsage(ev.data.usage ?? null);
               setPhase("idle");
               await refreshAuthMe();
+              await refreshSessionOrdering();
             } else if (ev.event === "error") {
               setError(`${ev.data.message} (${ev.data.code})`);
               if (accumulated) {
@@ -429,6 +441,7 @@ export function useChat(): UseChatReturn {
               }
               setPhase("error");
               await refreshAuthMe();
+              await refreshSessionOrdering();
             }
           }
         }
@@ -449,17 +462,19 @@ export function useChat(): UseChatReturn {
             partialMsg,
           ]);
           setPhase("idle");
+          await refreshSessionOrdering();
           return;
         }
         setError(err instanceof Error ? err.message : "Unknown error");
         setPhase("error");
         await refreshAuthMe();
+        await refreshSessionOrdering();
       } finally {
         abortRef.current = null;
         setPhase((prev) => (prev === "streaming" ? "idle" : prev));
       }
     },
-    [activeSessionId, userId, phase, refreshAuthMe, loadSessions],
+    [activeSessionId, userId, phase, refreshAuthMe, loadSessions, refreshSessionOrdering],
   );
 
   return {

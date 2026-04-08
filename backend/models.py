@@ -31,6 +31,7 @@ class ChatSession(SQLModel, table=True):
     user_id: uuid.UUID = Field(foreign_key="users.id")
     title: Optional[str] = Field(default=None)
     created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
 
     user: Optional["User"] = Relationship(back_populates="sessions")
     messages: list["ChatMessage"] = Relationship(back_populates="session")

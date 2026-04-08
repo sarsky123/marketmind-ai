@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Any, Optional
 
 from sqlalchemy import delete
@@ -46,6 +47,13 @@ class ChatRepository:
         sess.title = title
         await self._session.flush()
 
+    async def touch_session(self, session_id: uuid.UUID, ts: datetime | None = None) -> None:
+        sess = await self._session.get(ChatSession, session_id)
+        if sess is None:
+            return
+        sess.updated_at = ts or datetime.utcnow()
+        await self._session.flush()
+
     async def delete_session_owned_by(
         self,
         session_id: uuid.UUID,
@@ -67,7 +75,7 @@ class ChatRepository:
         stmt = (
             select(ChatSession)
             .where(ChatSession.user_id == user_id)
-            .order_by(ChatSession.created_at.desc())
+            .order_by(ChatSession.updated_at.desc(), ChatSession.created_at.desc())
         )
         result = await self._session.execute(stmt)
         return list(result.scalars().all())
