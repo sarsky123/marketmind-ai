@@ -13,10 +13,10 @@ start-infra:
 	docker compose up -d postgres redis
 
 start-backend:
-	docker compose up -d backend
+	docker compose up -d backend --build
 
 start-frontend:
-	docker compose up -d frontend
+	docker compose up -d frontend --build
 
 start-redisinsight:
 	docker compose up -d redisinsight
