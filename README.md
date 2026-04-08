@@ -146,6 +146,37 @@ make db-migrate MSG="describe_change"
 
 ---
 
+## Terraform Quick Start (EC2 + Route53)
+
+From repo root:
+
+```bash
+cd terraform
+terraform init
+```
+
+Set required variables from environment (no hardcoded key file path):
+
+```bash
+export TF_VAR_public_key_content="ssh-ed25519 AAAA... your_email@example.com"
+export TF_VAR_ssh_allowed_cidrs='Your CIDR block'
+```
+
+Run:
+
+```bash
+terraform plan
+terraform apply -auto-approve
+```
+
+Destroy when needed:
+
+```bash
+terraform destroy
+```
+
+---
+
 ## AI Tools Usage
 
 This project was bootstrapped with AI-assisted tooling (e.g. Cursor).
