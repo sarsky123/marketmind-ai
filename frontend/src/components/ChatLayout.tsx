@@ -74,7 +74,9 @@ export function ChatLayout() {
       if (!target || !(target instanceof Element)) {
         return;
       }
-      const inside = target.closest(`[data-chat-session-menu="${menuOpenSessionId}"]`);
+      const inside = target.closest(
+        `[data-chat-session-menu="${menuOpenSessionId}"], [data-chat-session-menu-portal="${menuOpenSessionId}"]`,
+      );
       if (!inside) {
         setMenuOpenSessionId(null);
         setMenuAnchor(null);
@@ -114,6 +116,7 @@ export function ChatLayout() {
         className="chat-sidebar__dropdown chat-sidebar__dropdown--portal"
         role="menu"
         aria-label="Chat actions"
+        data-chat-session-menu-portal={sessionId}
         style={{ top, right }}
       >
         <li className="chat-sidebar__dropdown-item-wrap" role="none">
