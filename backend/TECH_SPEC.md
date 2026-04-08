@@ -176,7 +176,7 @@ data: {"message": "...", "code": 500}
 
 ## Anonymous JWT authentication and API cost controls
 
-This stack uses **invite-aware anonymous JWTs** in an **HttpOnly cookie** plus **Redis** for daily visitor caps, per-browser-session API quotas, and IP throttling. **PostgreSQL** remains the source of truth for chat rows; the JWT claim `session_id` is an **auth session id** used only for Redis keys (`quota:{session_id}`), not the `ChatSession` primary key.
+This stack uses **invite-aware anonymous JWTs** in an **HttpOnly cookie** plus **Redis** for daily visitor caps, **UTC daily** per-browser-session API quotas, and IP throttling. **PostgreSQL** remains the source of truth for chat rows; the JWT claim `session_id` is an **auth session id** used only for Redis keys (`quota:{session_id}:{YYYY-MM-DD}`), not the `ChatSession` primary key.
 
 ### End-to-end flow
 
@@ -201,7 +201,7 @@ This stack uses **invite-aware anonymous JWTs** in an **HttpOnly cookie** plus *
 | --- | --- |
 | `visitors:{YYYY-MM-DD}` | Count of successful anonymous visitor mints that day (UTC) |
 | `invite:{token}` | JSON `{"status":"active|…","client":"…","created_at":"…"}`; **`SET` with `EX`** — TTL from **`INVITE_TTL_SECONDS`** (default **604800** = 7 days), applied by `scripts/generate_invite.py` |
-| `quota:{auth_session_uuid}` | Remaining API units; `DECR` per protected request; TTL aligned with JWT lifetime |
+| `quota:{auth_session_uuid}:{YYYY-MM-DD}` | Remaining API units for that **UTC day**; `DECR` per protected request; key is **lazy-initialized** to the JWT `quota` (daily cap) on first use; TTL ~48h |
 | `rl:{client_ip}:{unix_minute}` | Fixed **1-minute** IP window; compare to `RATE_LIMIT_PER_MIN` |
 
 ### Middleware behavior
@@ -209,7 +209,7 @@ This stack uses **invite-aware anonymous JWTs** in an **HttpOnly cookie** plus *
 - **Public** (no JWT/quota): `/`, `/health`, `POST /api/auth/anonymous`, `GET /api/auth/me`, `/docs`, `/openapi.json`, `/redoc`.
 - **`OPTIONS`:** Passed through immediately so CORS preflight is not blocked.
 - **All `/api/*`:** Subject to **IP** fixed-window limiting (returns **429** with `detail: rate_limit`).
-- **Protected `/api/*`:** Requires valid `session_token`; then **quota `DECR`** — if exhausted, **403** (`quota_exceeded`). **401** if cookie missing or JWT invalid.
+- **Protected `/api/*`:** Requires valid `session_token` (**401** if missing/invalid). **Quota is only decremented on** `POST /api/chat/stream` (LLM call); if quota is exhausted, that endpoint returns **403** (`quota_exceeded`).
 - **Client IP:** If `CLIENT_IP_TRUST_PROXY=true`, the first hop of `X-Forwarded-For` is used (only behind a **trusted** edge proxy).
 
 ### Invite generation (CLI)

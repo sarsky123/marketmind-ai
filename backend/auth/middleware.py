@@ -41,6 +41,11 @@ def _skip_auth_and_quota(path: str) -> bool:
     return False
 
 
+def _should_consume_quota(method: str, path: str) -> bool:
+    # Consume quota only when we actually trigger an LLM run.
+    return method.upper() == "POST" and path == "/api/chat/stream"
+
+
 class ProtectApiMiddleware(BaseHTTPMiddleware):
     """IP rate limit on `/api`; JWT + per-session Redis quota on protected `/api` routes."""
 
@@ -82,17 +87,20 @@ class ProtectApiMiddleware(BaseHTTPMiddleware):
                     content={"detail": "invalid_token", "message": "Invalid or expired session."},
                 )
 
-            redis = get_redis_client()
-            ok, remaining = await consume_quota_unit(redis, str(claims.session_id))
-            if not ok:
-                return JSONResponse(
-                    status_code=403,
-                    content={
-                        "detail": "quota_exceeded",
-                        "message": "API quota exceeded for this session.",
-                    },
-                )
             request.state.auth_claims = claims
-            request.state.quota_remaining = remaining
+            request.state.quota_remaining = None
+
+            if _should_consume_quota(request.method, path):
+                redis = get_redis_client()
+                ok, remaining = await consume_quota_unit(redis, str(claims.session_id), claims.quota)
+                if not ok:
+                    return JSONResponse(
+                        status_code=403,
+                        content={
+                            "detail": "quota_exceeded",
+                            "message": "API quota exceeded for this session.",
+                        },
+                    )
+                request.state.quota_remaining = remaining
 
         return await call_next(request)
