@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
 
 from auth.jwt_tokens import SESSION_COOKIE_NAME, decode_verify, mint_token
-from auth.redis_limits import init_quota, invite_is_active, quota_key, try_reserve_visitor_slot
+from auth.redis_limits import invite_is_active, quota_key, try_reserve_visitor_slot
 from config import get_settings
 from db import get_redis_client
 
@@ -64,7 +64,6 @@ async def anonymous_auth(body: AnonymousAuthRequest, response: Response) -> Anon
 
     auth_sid = uuid.uuid4()
     token, exp_ts = mint_token(auth_sid, role, quota, settings)
-    await init_quota(redis, str(auth_sid), quota, settings.jwt_expires_seconds)
     _set_session_cookie(response, token, settings.jwt_expires_seconds)
     return AnonymousAuthResponse(ok=True, exp=exp_ts)
 
@@ -88,7 +87,7 @@ async def auth_me(request: Request) -> dict[str, object]:
     raw = await redis.get(quota_key(str(claims.session_id)))
     quota_remaining: int | None
     if raw is None:
-        quota_remaining = None
+        quota_remaining = claims.quota
     else:
         try:
             quota_remaining = int(raw)

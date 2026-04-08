@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from redis.asyncio import Redis
 
@@ -14,8 +14,25 @@ def visitors_key_utc_today() -> str:
     return f"visitors:{day}"
 
 
-def quota_key(session_id: str) -> str:
-    return f"quota:{session_id}"
+def _utc_day() -> str:
+    return datetime.now(UTC).strftime("%Y-%m-%d")
+
+
+def quota_key(session_id: str, utc_day: str | None = None) -> str:
+    day = utc_day or _utc_day()
+    return f"quota:{session_id}:{day}"
+
+
+def _quota_ttl_seconds(now: datetime | None = None) -> int:
+    """
+    Keep today's quota keys around long enough for late reads/debugging.
+
+    Strategy: expire ~24h after next UTC midnight (max ~48h).
+    """
+    n = now or datetime.now(UTC)
+    next_midnight = datetime(n.year, n.month, n.day, tzinfo=UTC) + timedelta(days=1)
+    seconds_until_midnight = int((next_midnight - n).total_seconds())
+    return max(1, seconds_until_midnight + 86400)
 
 
 def invite_key(code: str) -> str:
@@ -51,8 +68,12 @@ async def invite_is_active(redis: Redis, code: str) -> bool:
 
 
 async def init_quota(redis: Redis, session_id: str, quota: int, ttl_seconds: int) -> None:
-    key = quota_key(session_id)
-    await redis.set(key, str(quota), ex=ttl_seconds)
+    """
+    Deprecated: quota is daily; minting should not pre-create quota keys.
+
+    Kept temporarily to avoid breaking imports; do not call.
+    """
+    _ = (redis, session_id, quota, ttl_seconds)
 
 
 async def check_ip_rate_limit(
@@ -78,12 +99,21 @@ async def check_ip_rate_limit(
 async def consume_quota_unit(
     redis: Redis,
     session_id: str,
+    daily_limit: int,
 ) -> tuple[bool, int | None]:
     """
-    DECR quota key. Returns (allowed, remaining_after_decrement or None if missing key).
+    DECR today's UTC quota key. Returns (allowed, remaining_after_decrement or None if missing key).
     If not allowed, rolls back the decrement.
     """
+    if daily_limit < 0:
+        daily_limit = 0
     key = quota_key(session_id)
+    # Lazy-init the daily bucket so `/api/auth/me` can show "full day left" before any request.
+    try:
+        await redis.set(key, str(daily_limit), ex=_quota_ttl_seconds(), nx=True)
+    except Exception:
+        # If Redis rejects SET NX for any reason, fallback to best-effort DECR behavior.
+        pass
     remaining = await redis.decr(key)
     if remaining < 0:
         await redis.incr(key)
