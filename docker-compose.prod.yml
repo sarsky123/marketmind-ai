@@ -1,0 +1,33 @@
+services:
+  postgres:
+    environment:
+      POSTGRES_USER: ${DB_USER:?missing}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?missing}
+      POSTGRES_DB: ${DB_NAME:?missing}
+    ports: []
+
+  redis:
+    ports: []
+
+  backend:
+    build:
+      target: prod
+    command:
+      [
+        "gunicorn",
+        "-k",
+        "uvicorn.workers.UvicornWorker",
+        "-w",
+        "${GUNICORN_WORKERS:-2}",
+        "-t",
+        "${GUNICORN_TIMEOUT:-120}",
+        "-b",
+        "0.0.0.0:8000",
+        "main:app",
+      ]
+
+  frontend:
+    build:
+      target: prod
+    ports:
+      - "80:80"

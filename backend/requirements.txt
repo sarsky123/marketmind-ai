@@ -8,4 +8,5 @@ asyncpg
 openai>=1.40.0
 yfinance
 tavily-python
+gunicorn
 

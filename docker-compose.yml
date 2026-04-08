@@ -3,57 +3,36 @@ services:
     image: postgres:15
     container_name: aift-postgres
     environment:
-      POSTGRES_USER: app
-      POSTGRES_PASSWORD: app
-      POSTGRES_DB: appdb
-    ports:
-      - "5432:5432"
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
     volumes:
       - aift-postgres-data:/var/lib/postgresql/data
 
   redis:
     image: redis:7
     container_name: aift-redis
-    ports:
-      - "6379:6379"
-
-  redisinsight:
-    image: redis/redisinsight:latest
-    container_name: aift-redisinsight
-    ports:
-      - "5540:5540"
-    depends_on:
-      - redis
 
   backend:
     build:
       context: ./backend
+      target: prod
     container_name: aift-backend
     env_file:
-      - ./backend/.env
+      - .env
     ports:
       - "8000:8000"
-    command: ["./start.sh"]
     depends_on:
       - postgres
       - redis
-    volumes:
-      - ./backend:/app
 
   frontend:
     build:
       context: ./frontend
+      target: prod
     container_name: aift-frontend
-    environment:
-      VITE_PROXY_TARGET: "http://backend:8000"
-    command: ["sh", "-c", "npm install && npm run dev"]
-    ports:
-      - "5173:5173"
     depends_on:
       - backend
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
 
 volumes:
   aift-postgres-data:

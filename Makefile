@@ -1,50 +1,53 @@
 .PHONY: up down build start-all start-infra start-backend start-frontend start-redisinsight restart ps logs-backend logs-frontend logs-postgres logs-redis db-migrate db-upgrade
 
+COMPOSE_DEV = docker compose -f docker-compose.yml -f docker-compose.dev.yml
+COMPOSE_PROD = docker compose -f docker-compose.yml -f docker-compose.prod.yml
+
 up:
-	docker compose up --build
+	$(COMPOSE_DEV) up --build
 
 build:
-	docker compose build
+	$(COMPOSE_DEV) build
 
 start-all:
-	docker compose up -d
+	$(COMPOSE_DEV) up -d
 
 start-infra:
-	docker compose up -d postgres redis
+	$(COMPOSE_DEV) up -d postgres redis
 
 start-backend:
-	docker compose up -d backend --build
+	$(COMPOSE_DEV) up -d backend --build
 
 start-frontend:
-	docker compose up -d frontend --build
+	$(COMPOSE_DEV) up -d frontend --build
 
 start-redisinsight:
-	docker compose up -d redisinsight
+	$(COMPOSE_DEV) up -d redisinsight
 
 restart:
 	docker start aift-postgres aift-redis aift-backend aift-frontend aift-redisinsight
 
 ps:
-	docker compose ps
+	$(COMPOSE_DEV) ps
 
 logs-backend:
-	docker compose logs -f backend
+	$(COMPOSE_DEV) logs -f backend
 
 logs-frontend:
-	docker compose logs -f frontend
+	$(COMPOSE_DEV) logs -f frontend
 
 logs-postgres:
-	docker compose logs -f postgres
+	$(COMPOSE_DEV) logs -f postgres
 
 logs-redis:
-	docker compose logs -f redis
+	$(COMPOSE_DEV) logs -f redis
 
 down:
-	docker compose down
+	$(COMPOSE_DEV) down
 
 db-migrate:
-	docker compose exec backend alembic revision --autogenerate -m "$(MSG)"
+	$(COMPOSE_DEV) exec backend alembic revision --autogenerate -m "$(MSG)"
 
 db-upgrade:
-	docker compose exec backend alembic upgrade head
+	$(COMPOSE_DEV) exec backend alembic upgrade head
 

@@ -1,0 +1,37 @@
+services:
+  postgres:
+    ports:
+      - "5432:5432"
+
+  redis:
+    ports:
+      - "6379:6379"
+
+  redisinsight:
+    image: redis/redisinsight:latest
+    container_name: aift-redisinsight
+    ports:
+      - "5540:5540"
+    depends_on:
+      - redis
+
+  backend:
+    build:
+      target: dev
+    command: ["./start.sh"]
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+
+  frontend:
+    build:
+      target: dev
+    command: ["npm", "run", "dev", "--", "--host", "0.0.0.0"]
+    ports:
+      - "5173:5173"
+    environment:
+      VITE_PROXY_TARGET: "http://backend:8000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules

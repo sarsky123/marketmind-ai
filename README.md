@@ -107,10 +107,10 @@ flowchart LR
 ### 1) Configure Environment
 
 ```bash
-cp backend/.env.example backend/.env
+cp backend/.env.example .env
 ```
 
-Set required values in `backend/.env`:
+Set required values in `.env`:
 
 - `DATABASE_URL`
 - `REDIS_URL`
@@ -121,7 +121,7 @@ Set required values in `backend/.env`:
 ### 2) Start the Stack
 
 ```bash
-docker compose up --build
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 ```
 
 or:
@@ -139,7 +139,7 @@ Default endpoints:
 ### 3) Stop the Stack
 
 ```bash
-docker compose down
+docker compose -f docker-compose.yml -f docker-compose.dev.yml down
 ```
 
 ## Database Migrations
@@ -204,14 +204,22 @@ Workflow: `.github/workflows/deploy-ec2.yml`
 - Waits on `cloud-init status --wait` to ensure Terraform user-data bootstrap completed.
 - Deploy script:
   - clone/pull in `/opt/marketmind-ai`
-  - `docker compose down`
-  - `docker compose up -d --build`
+  - generate `.env` from GitHub Secrets (recommended: `APP_ENV_B64`)
+  - `docker compose -f docker-compose.yml -f docker-compose.prod.yml down`
+  - `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build`
 
 Required GitHub repository secrets:
 
 - `EC2_HOST` (plain host/IP, no protocol)
 - `EC2_USER` (typically `ubuntu`)
 - `EC2_SSH_KEY` (private key matching Terraform public key)
+- `APP_ENV_B64` (base64-encoded full root `.env`, recommended)
+
+Fallback per-key secrets if `APP_ENV_B64` is not set:
+
+- `DB_USER`, `DB_PASSWORD`, `DB_NAME`
+- `DATABASE_URL`, `REDIS_URL`
+- `OPENAI_API_KEY`, `TAVILY_API_KEY`, `AUTH_JWT_SECRET`
 
 ## Operations and Troubleshooting
 
