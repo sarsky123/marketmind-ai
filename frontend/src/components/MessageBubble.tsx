@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ChatMessage } from "../lib/types";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
@@ -8,6 +8,7 @@ import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
 
 interface Props {
   message: ChatMessage;
+  onRolloutProgress?: () => void;
 }
 
 function sanitizeLinkHref(href?: string): string | undefined {
@@ -60,10 +61,45 @@ const markdownComponents: Components = {
   }
 };
 
-export function MessageBubble({ message }: Props) {
+export function MessageBubble({ message, onRolloutProgress }: Props) {
   const isUser = message.role === "user";
   const content = message.content ?? "";
+  const shouldRollout = !isUser && !!message.animateOnMount;
+  const [revealLength, setRevealLength] = useState(
+    shouldRollout ? 0 : content.length,
+  );
   const [showAllCitations, setShowAllCitations] = useState(false);
+  const displayedContent = useMemo(
+    () => (shouldRollout ? content.slice(0, revealLength) : content),
+    [content, revealLength, shouldRollout],
+  );
+  const rolloutComplete = revealLength >= content.length;
+
+  useEffect(() => {
+    if (!shouldRollout || rolloutComplete) {
+      return;
+    }
+    onRolloutProgress?.();
+  }, [revealLength, rolloutComplete, shouldRollout, onRolloutProgress]);
+
+  useEffect(() => {
+    if (!shouldRollout) {
+      setRevealLength(content.length);
+      return;
+    }
+
+    setRevealLength(0);
+    const step = Math.max(1, Math.ceil(content.length / 180));
+    const timer = window.setInterval(() => {
+      setRevealLength((prev) => {
+        const next = prev + step;
+        return next >= content.length ? content.length : next;
+      });
+    }, 22);
+
+    return () => window.clearInterval(timer);
+  }, [content, shouldRollout]);
+
   const citationThreshold = 5;
   const safeCitations =
     message.citations?.filter((citation) => sanitizeLinkHref(citation.url) !== undefined) ?? [];
@@ -73,15 +109,21 @@ export function MessageBubble({ message }: Props) {
 
   return (
     <div className={`bubble-row ${isUser ? "bubble-row--user" : "bubble-row--assistant"}`}>
-      <div className={`bubble ${isUser ? "bubble--user" : "bubble--assistant"}`}>
+      <div
+        className={`bubble ${
+          isUser
+            ? "bubble--user"
+            : `bubble--assistant ${message.animateOnMount ? "bubble--assistant-animate" : ""}`
+        }`}
+      >
         {isUser ? (
           <p className="bubble__text bubble__text--plain">{content}</p>
         ) : (
           <div className="bubble__text bubble__text--markdown">
             <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-              {content}
+              {displayedContent}
             </ReactMarkdown>
-            {!!safeCitations.length && (
+            {!!safeCitations.length && rolloutComplete && (
               <div className="bubble__citations-wrap">
                 <div className="bubble__citations" aria-label="Citations">
                   {displayedCitations.map((citation) => {

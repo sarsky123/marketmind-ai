@@ -11,6 +11,21 @@ export interface ChatMessage {
   role: ChatRole;
   content: string;
   citations?: Citation[];
+  animateOnMount?: boolean;
+}
+
+export interface ChatSessionSummary {
+  session_id: string;
+  title: string | null;
+  created_at: string;
+}
+
+export interface ServerChatMessage {
+  id: string;
+  role: string;
+  content: string | null;
+  created_at: string;
+  citations?: Citation[];
 }
 
 export type ChatPhase = "idle" | "streaming" | "error";

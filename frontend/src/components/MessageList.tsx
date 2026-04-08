@@ -13,9 +13,10 @@ interface Props {
 
 export function MessageList({ messages, streamingContent, statusSteps, isStreaming }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const followLatest = () => bottomRef.current?.scrollIntoView({ behavior: "smooth" });
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    followLatest();
   }, [messages, streamingContent, statusSteps]);
 
   const hasContent = messages.length > 0 || isStreaming;
@@ -33,7 +34,7 @@ export function MessageList({ messages, streamingContent, statusSteps, isStreami
       )}
 
       {messages.map((msg) => (
-        <MessageBubble key={msg.id} message={msg} />
+        <MessageBubble key={msg.id} message={msg} onRolloutProgress={followLatest} />
       ))}
 
       {isStreaming && statusSteps.length > 0 && (
