@@ -265,6 +265,13 @@ html, body, #root {
     0 2px 8px color-mix(in srgb, var(--color-text) 8%, transparent);
 }
 
+.chat-sidebar__dropdown--portal {
+  position: fixed;
+  top: 0;
+  right: 0;
+  z-index: 50;
+}
+
 .chat-sidebar__dropdown-item-wrap {
   margin: 0;
 }

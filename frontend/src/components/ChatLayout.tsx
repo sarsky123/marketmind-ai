@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { useChat } from "../hooks/useChat";
 import { Composer } from "./Composer";
 import { ConnectionBanner } from "./ConnectionBanner";
@@ -39,6 +40,7 @@ export function ChatLayout() {
   }, [authReady, authRole, quotaRemaining, quotaDaily]);
   const [theme, setTheme] = useState<ThemeMode>("light");
   const [menuOpenSessionId, setMenuOpenSessionId] = useState<string | null>(null);
+  const [menuAnchor, setMenuAnchor] = useState<DOMRect | null>(null);
   const [recentChatsExpanded, setRecentChatsExpanded] = useState(false);
 
   const isStreaming = phase === "streaming";
@@ -75,11 +77,13 @@ export function ChatLayout() {
       const inside = target.closest(`[data-chat-session-menu="${menuOpenSessionId}"]`);
       if (!inside) {
         setMenuOpenSessionId(null);
+        setMenuAnchor(null);
       }
     };
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         setMenuOpenSessionId(null);
+        setMenuAnchor(null);
       }
     };
     document.addEventListener("pointerdown", onPointerDown, true);
@@ -99,6 +103,56 @@ export function ChatLayout() {
       setMenuOpenSessionId((ex) => (ex === sessionId ? null : ex));
     }
   };
+
+  const menuPortal = useMemo(() => {
+    if (!menuOpenSessionId || !menuAnchor) return null;
+    const sessionId = menuOpenSessionId;
+    const top = Math.round(menuAnchor.bottom + 6);
+    const right = Math.round(window.innerWidth - menuAnchor.right);
+    return createPortal(
+      <ul
+        className="chat-sidebar__dropdown chat-sidebar__dropdown--portal"
+        role="menu"
+        aria-label="Chat actions"
+        style={{ top, right }}
+      >
+        <li className="chat-sidebar__dropdown-item-wrap" role="none">
+          <button
+            type="button"
+            className="chat-sidebar__dropdown-item chat-sidebar__dropdown-item--danger"
+            role="menuitem"
+            onClick={(e) => {
+              e.stopPropagation();
+              setMenuOpenSessionId(null);
+              setMenuAnchor(null);
+              void confirmDeleteSession(sessionId);
+            }}
+          >
+            <svg
+              className="chat-sidebar__dropdown-icon"
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden
+            >
+              <path d="M3 6h18" />
+              <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
+              <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
+              <line x1="10" x2="10" y1="11" y2="17" />
+              <line x1="14" x2="14" y1="11" y2="17" />
+            </svg>
+            <span>Delete chat</span>
+          </button>
+        </li>
+      </ul>,
+      document.body,
+    );
+  }, [menuOpenSessionId, menuAnchor, confirmDeleteSession]);
 
   return (
     <div className="app-shell">
@@ -141,7 +195,6 @@ export function ChatLayout() {
         >
           {sessions.map((session) => {
             const isMenuOpen = menuOpenSessionId === session.session_id;
-            const menuId = `session-menu-${session.session_id}`;
             return (
               <li
                 key={session.session_id}
@@ -166,58 +219,26 @@ export function ChatLayout() {
                       className={`chat-sidebar__item-kebab ${isMenuOpen ? "chat-sidebar__item-kebab--open" : ""}`}
                       aria-haspopup="menu"
                       aria-expanded={isMenuOpen}
-                      aria-controls={menuId}
                       aria-label={isMenuOpen ? "Close chat menu" : "Open chat menu"}
                       onClick={(e) => {
                         e.stopPropagation();
-                        setMenuOpenSessionId((id) => (id === session.session_id ? null : session.session_id));
+                        const nextId = session.session_id;
+                        setMenuOpenSessionId((id) => {
+                          const next = id === nextId ? null : nextId;
+                          if (next) {
+                            const rect = (e.currentTarget as HTMLButtonElement).getBoundingClientRect();
+                            setMenuAnchor(rect);
+                          } else {
+                            setMenuAnchor(null);
+                          }
+                          return next;
+                        });
                       }}
                     >
                       <span className="chat-sidebar__item-kebab-icon" aria-hidden>
                         ⋮
                       </span>
                     </button>
-                    {isMenuOpen ? (
-                      <ul
-                        id={menuId}
-                        className="chat-sidebar__dropdown"
-                        role="menu"
-                        aria-label="Chat actions"
-                      >
-                        <li className="chat-sidebar__dropdown-item-wrap" role="none">
-                          <button
-                            type="button"
-                            className="chat-sidebar__dropdown-item chat-sidebar__dropdown-item--danger"
-                            role="menuitem"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setMenuOpenSessionId(null);
-                              void confirmDeleteSession(session.session_id);
-                            }}
-                          >
-                            <svg
-                              className="chat-sidebar__dropdown-icon"
-                              width="16"
-                              height="16"
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="2"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              aria-hidden
-                            >
-                              <path d="M3 6h18" />
-                              <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
-                              <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
-                              <line x1="10" x2="10" y1="11" y2="17" />
-                              <line x1="14" x2="14" y1="11" y2="17" />
-                            </svg>
-                            <span>Delete chat</span>
-                          </button>
-                        </li>
-                      </ul>
-                    ) : null}
                   </div>
                 </div>
               </li>
@@ -228,6 +249,7 @@ export function ChatLayout() {
           )}
         </ul>
       </aside>
+      {menuPortal}
 
       <section className="chat-layout">
         <header className="chat-header">
