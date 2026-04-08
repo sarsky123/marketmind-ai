@@ -18,3 +18,12 @@ reference/
 # Local Cursor skills metadata
 .claude/skills/
 
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfvars
+
+# SSH Keys
+.pem
+id_ed25519
