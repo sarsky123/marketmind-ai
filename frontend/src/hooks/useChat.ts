@@ -10,6 +10,11 @@ import type {
   StatusStep,
 } from "../lib/types";
 
+const fetchApi: typeof fetch = (input, init) =>
+  fetch(input, { credentials: "include", ...init });
+
+export type AuthBootstrapPhase = "checking" | "ready" | "blocked";
+
 let msgCounter = 0;
 function nextId(): string {
   msgCounter += 1;
@@ -25,11 +30,14 @@ interface UseChatReturn {
   streamingContent: string;
   phase: ChatPhase;
   error: string | null;
+  authPhase: AuthBootstrapPhase;
+  authError: string | null;
   usage: DonePayload["usage"] | null;
   sendMessage: (text: string) => Promise<void>;
   stop: () => void;
   createSession: () => Promise<void>;
   switchSession: (sessionId: string) => Promise<void>;
+  deleteSession: (sessionId: string) => Promise<boolean>;
 }
 
 export function useChat(): UseChatReturn {
@@ -41,6 +49,8 @@ export function useChat(): UseChatReturn {
   const [streamingContent, setStreamingContent] = useState("");
   const [phase, setPhase] = useState<ChatPhase>("idle");
   const [error, setError] = useState<string | null>(null);
+  const [authPhase, setAuthPhase] = useState<AuthBootstrapPhase>("checking");
+  const [authError, setAuthError] = useState<string | null>(null);
   const [usage, setUsage] = useState<DonePayload["usage"] | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -62,7 +72,7 @@ export function useChat(): UseChatReturn {
   }, []);
 
   const loadSessions = useCallback(async (uid: string) => {
-    const res = await fetch(`/api/sessions?user_id=${encodeURIComponent(uid)}`);
+    const res = await fetchApi(`/api/sessions?user_id=${encodeURIComponent(uid)}`);
     if (!res.ok) {
       throw new Error(`Load sessions failed: ${res.status}`);
     }
@@ -72,7 +82,7 @@ export function useChat(): UseChatReturn {
   }, []);
 
   const switchSession = useCallback(async (sessionId: string) => {
-    const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/messages`);
+    const res = await fetchApi(`/api/sessions/${encodeURIComponent(sessionId)}/messages`);
     if (!res.ok) {
       throw new Error(`Load messages failed: ${res.status}`);
     }
@@ -90,7 +100,7 @@ export function useChat(): UseChatReturn {
 
   const createSession = useCallback(async () => {
     try {
-      const res = await fetch("/api/sessions", {
+      const res = await fetchApi("/api/sessions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title: "New chat", user_id: userId }),
@@ -117,6 +127,59 @@ export function useChat(): UseChatReturn {
   }, [userId, loadSessions]);
 
   useEffect(() => {
+    let cancelled = false;
+    const bootstrapAuth = async () => {
+      setAuthError(null);
+      const me = await fetchApi("/api/auth/me");
+      if (cancelled) {
+        return;
+      }
+      if (me.ok) {
+        setAuthPhase("ready");
+        return;
+      }
+      const params = new URLSearchParams(window.location.search);
+      const inviteRaw = params.get("invite");
+      const invite = inviteRaw && inviteRaw.trim() !== "" ? inviteRaw.trim() : null;
+      const anon = await fetchApi("/api/auth/anonymous", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ invite }),
+      });
+      if (cancelled) {
+        return;
+      }
+      if (!anon.ok) {
+        if (anon.status === 403) {
+          setAuthError(
+            "Daily visitor limit reached. Try again tomorrow or open an invite link.",
+          );
+        } else if (anon.status === 400) {
+          setAuthError("Invalid or expired invite code.");
+        } else if (anon.status === 429) {
+          setAuthError("Too many requests. Please slow down.");
+        } else {
+          setAuthError("Could not start a session. Please refresh the page.");
+        }
+        setAuthPhase("blocked");
+        return;
+      }
+      params.delete("invite");
+      const search = params.toString();
+      const nextUrl = `${window.location.pathname}${search ? `?${search}` : ""}${window.location.hash}`;
+      window.history.replaceState({}, "", nextUrl);
+      setAuthPhase("ready");
+    };
+    void bootstrapAuth();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (authPhase !== "ready") {
+      return;
+    }
     const init = async () => {
       try {
         const persistedUserId = localStorage.getItem("aift_user_id");
@@ -134,11 +197,53 @@ export function useChat(): UseChatReturn {
       }
     };
     void init();
-  }, [createSession, loadSessions, switchSession]);
+  }, [authPhase, createSession, loadSessions, switchSession]);
 
   const stop = useCallback(() => {
     abortRef.current?.abort();
   }, []);
+
+  const deleteSession = useCallback(
+    async (sessionId: string): Promise<boolean> => {
+      if (!userId) {
+        setError("Cannot delete chat: missing user.");
+        return false;
+      }
+      const wasActive = activeSessionId === sessionId;
+      if (wasActive) {
+        stop();
+      }
+      try {
+        const res = await fetchApi(
+          `/api/sessions/${encodeURIComponent(sessionId)}?user_id=${encodeURIComponent(userId)}`,
+          { method: "DELETE" },
+        );
+        if (!res.ok) {
+          setError(`Delete chat failed: ${res.status}`);
+          return false;
+        }
+        const remaining = sessions.filter((s) => s.session_id !== sessionId);
+        setSessions(remaining);
+        if (wasActive) {
+          setMessages([]);
+          setStreamingContent("");
+          setStatusSteps([]);
+          setUsage(null);
+          setError(null);
+          if (remaining.length > 0) {
+            await switchSession(remaining[0].session_id);
+          } else {
+            await createSession();
+          }
+        }
+        return true;
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to delete chat");
+        return false;
+      }
+    },
+    [userId, activeSessionId, stop, sessions, switchSession, createSession],
+  );
 
   const sendMessage = useCallback(
     async (text: string) => {
@@ -158,7 +263,7 @@ export function useChat(): UseChatReturn {
       let accumulated = "";
 
       try {
-        const res = await fetch("/api/chat/stream", {
+        const res = await fetchApi("/api/chat/stream", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ session_id: activeSessionId, message: text }),
@@ -166,7 +271,15 @@ export function useChat(): UseChatReturn {
         });
 
         if (!res.ok || !res.body) {
-          throw new Error(`Stream failed: ${res.status}`);
+          if (res.status === 403) {
+            setError("Quota exceeded. Please request an invite code.");
+          } else if (res.status === 429) {
+            setError("Too many requests. Please slow down.");
+          } else {
+            setError(`Stream failed: ${res.status}`);
+          }
+          setPhase("error");
+          return;
         }
 
         const reader = res.body.getReader();
@@ -236,18 +349,18 @@ export function useChat(): UseChatReturn {
         }
       } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") {
-          if (accumulated.length > 0) {
-            setMessages((prev) => [
-              ...prev,
-              {
-                id: nextId(),
-                role: "assistant",
-                content: accumulated,
-                animateOnMount: true,
-              },
-            ]);
-            setStreamingContent("");
-          }
+          setStreamingContent("");
+          setStatusSteps([]);
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: nextId(),
+              role: "assistant",
+              content: accumulated,
+              generationStopped: true,
+              animateOnMount: accumulated.length > 0,
+            },
+          ]);
           setPhase("idle");
           return;
         }
@@ -270,10 +383,13 @@ export function useChat(): UseChatReturn {
     streamingContent,
     phase,
     error,
+    authPhase,
+    authError,
     usage,
     sendMessage,
     stop,
     createSession,
     switchSession,
+    deleteSession,
   };
 }

@@ -12,6 +12,8 @@ export interface ChatMessage {
   content: string;
   citations?: Citation[];
   animateOnMount?: boolean;
+  /** True when the user aborted the SSE stream; UI shows a short status line. */
+  generationStopped?: boolean;
 }
 
 export interface ChatSessionSummary {

@@ -107,6 +107,9 @@ export function MessageBubble({ message, onRolloutProgress }: Props) {
   const displayedCitations =
     hasHiddenCitations && !showAllCitations ? safeCitations.slice(0, citationThreshold) : safeCitations;
 
+  const hasAssistantBody =
+    content.trim().length > 0 || (!!safeCitations.length && rolloutComplete);
+
   return (
     <div className={`bubble-row ${isUser ? "bubble-row--user" : "bubble-row--assistant"}`}>
       <div
@@ -120,9 +123,11 @@ export function MessageBubble({ message, onRolloutProgress }: Props) {
           <p className="bubble__text bubble__text--plain">{content}</p>
         ) : (
           <div className="bubble__text bubble__text--markdown">
-            <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-              {displayedContent}
-            </ReactMarkdown>
+            {displayedContent.trim() ? (
+              <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+                {displayedContent}
+              </ReactMarkdown>
+            ) : null}
             {!!safeCitations.length && rolloutComplete && (
               <div className="bubble__citations-wrap">
                 <div className="bubble__citations" aria-label="Citations">
@@ -157,6 +162,20 @@ export function MessageBubble({ message, onRolloutProgress }: Props) {
                       : `Show ${safeCitations.length - citationThreshold} more sources`}
                   </button>
                 )}
+              </div>
+            )}
+            {message.generationStopped && rolloutComplete && (
+              <div
+                className={
+                  hasAssistantBody
+                    ? "bubble__stopped-note"
+                    : "bubble__stopped-note bubble__stopped-note--standalone"
+                }
+                role="status"
+              >
+                {content.trim()
+                  ? "You stopped generation."
+                  : "You stopped generation before the assistant produced a reply."}
               </div>
             )}
           </div>

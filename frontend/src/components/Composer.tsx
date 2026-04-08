@@ -5,22 +5,25 @@ interface Props {
   phase: ChatPhase;
   onSend: (text: string) => void;
   onStop: () => void;
+  /** When true (e.g. auth not ready), input and send are blocked. */
+  disabled?: boolean;
 }
 
-export function Composer({ phase, onSend, onStop }: Props) {
+export function Composer({ phase, onSend, onStop, disabled = false }: Props) {
   const [text, setText] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const isStreaming = phase === "streaming";
+  const locked = disabled || isStreaming;
 
   const handleSubmit = useCallback(() => {
     const trimmed = text.trim();
-    if (!trimmed || isStreaming) return;
+    if (!trimmed || locked) return;
     onSend(trimmed);
     setText("");
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
-  }, [text, isStreaming, onSend]);
+  }, [text, locked, onSend]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -44,24 +47,31 @@ export function Composer({ phase, onSend, onStop }: Props) {
       <textarea
         ref={textareaRef}
         className="composer__input"
-        placeholder="Ask about finance, markets, or news..."
+        placeholder={
+          disabled ? "Signing in…" : "Ask about finance, markets, or news..."
+        }
         value={text}
         onChange={handleInput}
         onKeyDown={handleKeyDown}
         rows={1}
         aria-label="Message input"
-        disabled={isStreaming}
+        disabled={locked}
       />
       {isStreaming ? (
-        <button type="button" className="composer__btn composer__btn--stop" onClick={onStop}>
-          Stop
+        <button
+          type="button"
+          className="composer__btn composer__btn--stop"
+          onClick={onStop}
+          aria-label="Stop generating the assistant response"
+        >
+          Stop generating
         </button>
       ) : (
         <button
           type="button"
           className="composer__btn composer__btn--send"
           onClick={handleSubmit}
-          disabled={!text.trim()}
+          disabled={!text.trim() || disabled}
         >
           Send
         </button>
