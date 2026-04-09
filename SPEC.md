@@ -24,20 +24,24 @@ This project is a web-search-enabled AI chatbot built on a decoupled architectur
 - **Agent framework:** **LangGraph** or **OpenAI Function Calling** + Asyncio state machine.
 - **Version control:** Git — **strict adherence to [Conventional Commits](https://www.conventionalcommits.org/)**.
 
-## 3. Storage and Deployment Strategy (Hybrid Cloud)
+## 3. Storage and Deployment Strategy
 
-Behavior must be driven **entirely by environment variables** (`.env`) so the same codebase runs in two modes.
+Behavior must be driven **entirely by environment variables** (`.env`) so the same codebase can run locally and in production without host hardcoding. **See also:** [README.md](README.md) for Terraform, CI/CD, and Compose overlay filenames.
 
 ### Local development (Dockerized)
 
 - Provide a **root-level `docker-compose.yml`** that starts **frontend**, **backend**, **postgres**, and **redis**.
+- Typical workflow also uses a **dev overlay** (e.g., `docker-compose.dev.yml`) for published ports and tooling; see README.
 - Example local DB URL shape: `postgresql://user:pass@localhost:5432/localdb` (actual credentials via `.env`).
 
-### Production (serverless-oriented)
+### Production (primary path in this repository: single-node VM + Compose)
 
-- **Frontend:** Vercel or Netlify.
-- **Backend:** Render or Railway as a web service.
-- **Data:** Connect to **serverless Postgres** (e.g., **Neon**) and **serverless Redis** (e.g., **Upstash**).
+- **Runtime:** Multi-service stack on **one machine** (e.g., **AWS EC2** provisioned with Terraform) using **`docker compose`** with base + **production overlay** (e.g., `docker-compose.prod.yml`), TLS/reverse proxy, and deploy automation (e.g., GitHub Actions) as documented in README.
+- **Data:** **PostgreSQL** and **Redis** run as Compose services on the same host (or point **`DATABASE_URL`** / **`REDIS_URL`** at managed instances if you choose).
+
+### Alternative topologies (env-driven)
+
+- The same application can be deployed with a **split** topology — e.g., static frontend on a CDN host, API on a PaaS web service, **managed Postgres** (Neon, RDS, etc.) and **managed Redis** (Upstash, ElastiCache, etc.) — as long as **`DATABASE_URL`** and **`REDIS_URL`** (and related documented env) are set correctly. This repository’s documented production path remains **VM + Compose**.
 
 ### Migrations
 
@@ -86,7 +90,7 @@ Integrate the following so answers stay timely, accurate, and **grounded** (no f
 - **Agent tool calling:** Pydantic models for tool inputs (e.g., `MarketDataQuery` with `asset_symbol`, `data_type`) for LLM function calling / JSON Schema.
 - **API contracts:** `ChatRequest`, SSE payload models, etc.; FastAPI should return **422** on invalid input.
 - **External APIs:** Response models (e.g., Tavily) to strip noise before context enters the LLM.
-- **Persistence:** **SQLModel** for PostgreSQL entities (including **`ChatSession`** / **`ChatMessage`** and related tables); schema evolution via **Alembic** (same workflow for local Docker Postgres and cloud Neon).
+- **Persistence:** **SQLModel** for PostgreSQL entities (including **`ChatSession`** / **`ChatMessage`** and related tables); schema evolution via **Alembic** (same workflow for local Docker Postgres and any production Postgres — containerized on a VM, RDS, Neon, or equivalent).
 
 ## 7. Multi-Agent Architecture
 
@@ -99,7 +103,9 @@ Integrate the following so answers stay timely, accurate, and **grounded** (no f
 
 ## 8. UX and Frontend Behavior
 
-- **Multi-tab chat and history:** **Zustand** with **persist** middleware — save session state (multiple conversation tabs, message history) to **localStorage**.
+- **Chat sessions and message history:** **PostgreSQL** is authoritative. The client loads the session list and messages via HTTP APIs; no requirement to persist full chat history in **`localStorage`**.
+- **Client state:** Centralize streaming and UI state in a **`useChat`** hook (React `useState` and related patterns). An in-memory cache may hold messages per session when switching conversations within a **single browser tab**.
+- **Multi-tab:** Each browser tab has its **own** React state unless you add explicit cross-tab sync. Users can still open multiple tabs; each loads from the server as needed.
 - **Abort generation:** Use **`AbortController`**. Provide a **“Stop Generating”** control during streaming to halt the client stream and reduce wasted API use. The FastAPI backend must handle cancellation (**e.g., `asyncio.CancelledError`**) and tear down background work cleanly.
 - **Rich execution feedback:** Before the token stream, drive a **“Thought Process”** UI from **`event: status`** (e.g., “Agent 1 analyzing intent…”, “Searched Tavily for CPI data”).
 
@@ -130,7 +136,7 @@ Integrate the following so answers stay timely, accurate, and **grounded** (no f
 The **README.md** must stay current and include **these sections** (titles as below):
 
 1. **Project Startup & Environment Setup** — `.env` setup, running **`docker-compose.yml`**, and local vs production notes.
-2. **Architecture Design** — Multi-agent flow, hybrid deployment (Docker vs Vercel/Netlify + Render/Railway + Neon/Upstash), **PostgreSQL vs Redis roles**, **`ChatSession` / `ChatMessage`**, caching and rate-limit behavior, and **database schema** overview.
+2. **Architecture Design** — Multi-agent flow; **local Docker Compose vs production VM Compose** (and optional split deployment via env); **PostgreSQL vs Redis roles**, **`ChatSession` / `ChatMessage`**, caching and rate-limit behavior, and **database schema** overview.
 3. **AI Tools Usage** — Explicit documentation of prompts and methods used with AI tooling (e.g., Cursor/Copilot) for this assignment.
 
 ## 12. Engineering and Review Standards

@@ -44,9 +44,9 @@ Centralize chat + SSE logic in a custom hook, e.g. `useChat(options)`.
 - `stop()` — abort in-flight stream; reset streaming state to idle (server may emit nothing further).
 - `clearStatus()` — optional between turns.
 
-**Persistence (assignment / UX)**
+**Persistence**
 
-- Align with [SPEC.md](../SPEC.md): **Zustand + persist** for multi-tab session and history in `localStorage` when that milestone lands; `useChat` can be the consumer of that store or wrap it.
+- Align with [SPEC.md](../SPEC.md): **PostgreSQL** is authoritative for sessions and messages; the client fetches via HTTP. The **`useChat`** hook owns ephemeral UI state (streaming, status steps, errors) and may keep an **in-memory** per-session message cache when switching chats in one tab. **Multi-tab:** independent React state per tab unless cross-tab sync is added.
 
 ---
 
